@@ -52,7 +52,8 @@ a {
 
 button:focus-visible,
 a:focus-visible,
-select:focus-visible {
+select:focus-visible,
+input:focus-visible {
   outline: 3px solid rgb(71 135 103 / 30%);
   outline-offset: 2px;
 }
@@ -714,6 +715,27 @@ select:focus-visible {
   font-weight: 580;
 }
 
+.ledger-table tbody th small {
+  display: block;
+  margin-top: 3px;
+  color: #6f927d;
+  font-size: 8px;
+  font-weight: 720;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.ledger-table .formula-row th,
+.ledger-table .formula-row td {
+  background: #f4f7f2;
+  font-weight: 680;
+}
+
+.ledger-table .formula-row + .formula-row th,
+.ledger-table .formula-row + .formula-row td {
+  border-top-color: #dce5dc;
+}
+
 .ledger-table thead th span,
 .ledger-table thead th small {
   display: block;
@@ -860,6 +882,134 @@ select:focus-visible {
 .cell-component-list li small,
 .source-link {
   grid-column: 1 / -1;
+}
+
+.source-gap-label {
+  color: #9a5d21 !important;
+  font-weight: 700;
+}
+
+.manual-account-head {
+  display: grid;
+  gap: 17px;
+}
+
+.manual-account-head > label,
+.manual-entry-form label {
+  display: grid;
+  gap: 6px;
+  color: #6b766e;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.manual-account-head > label {
+  max-width: 360px;
+}
+
+.manual-account-head select,
+.manual-entry-form input,
+.manual-entry-form select {
+  width: 100%;
+  padding: 9px 11px;
+  border: 1px solid #d7ded7;
+  border-radius: 8px;
+  background: #fff;
+  color: var(--ink);
+  font: inherit;
+  font-size: 11px;
+  font-weight: 540;
+  letter-spacing: normal;
+  text-transform: none;
+}
+
+.manual-balance-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 11px;
+}
+
+.manual-account-layout {
+  display: grid;
+  grid-template-columns: minmax(280px, 0.7fr) minmax(420px, 1.3fr);
+  gap: 17px;
+  align-items: start;
+}
+
+.manual-entry-panel h2 {
+  margin: 0 0 17px;
+  font-size: 17px;
+  letter-spacing: -0.025em;
+}
+
+.manual-entry-form {
+  display: grid;
+  gap: 13px;
+}
+
+.manual-entry-actions,
+.manual-row-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.manual-transaction-list {
+  display: grid;
+}
+
+.manual-transaction-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 13px;
+  padding: 12px 0;
+  border-top: 1px solid var(--line-soft);
+}
+
+.manual-transaction-row:first-child {
+  border-top: 0;
+}
+
+.manual-transaction-row > div:first-child {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.manual-transaction-row > div:first-child strong {
+  overflow: hidden;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.manual-transaction-row > div:first-child span {
+  color: #8a948d;
+  font-size: 9px;
+}
+
+.manual-transaction-row > strong {
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.manual-row-actions button {
+  padding: 5px 8px;
+  border: 1px solid #d7ded7;
+  border-radius: 6px;
+  background: #f8faf7;
+  color: #526158;
+  font-size: 9px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.manual-row-actions .danger-button {
+  border-color: #ecd3ce;
+  background: #fff6f4;
+  color: #9a4e42;
 }
 
 .source-link {
@@ -1465,6 +1615,10 @@ select:focus-visible {
     grid-template-columns: 1fr;
   }
 
+  .manual-account-layout {
+    grid-template-columns: 1fr;
+  }
+
   .account-strip {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -1551,7 +1705,8 @@ select:focus-visible {
   .metric-grid,
   .data-grid,
   .account-strip,
-  .statement-list {
+  .statement-list,
+  .manual-balance-metrics {
     grid-template-columns: 1fr;
   }
 
@@ -1573,6 +1728,14 @@ select:focus-visible {
 
   .transaction-row select {
     grid-column: 2 / -1;
+  }
+
+  .manual-transaction-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .manual-row-actions {
+    grid-column: 1 / -1;
   }
 
   .review-summary {

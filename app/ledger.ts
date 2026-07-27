@@ -1,8 +1,6 @@
 import {
   emptyFinanceData,
   type AccountRow,
-  type AggregateComponentRow,
-  type AggregateRow,
   type BalanceRow,
   type CategoryRow,
   type FinanceData,
@@ -11,6 +9,12 @@ import {
   type StatementRow,
   type TransactionRow,
 } from "./finance-data";
+import { deriveLedgerData, transactionMonth } from "./derive-ledger.mjs";
+import {
+  createManualTransaction as createManualRecord,
+  deleteManualTransaction as deleteManualRecord,
+  updateManualTransaction as updateManualRecord,
+} from "./manual-transactions.mjs";
 
 type UnknownRecord = Record<string, unknown>;
 
@@ -21,9 +25,13 @@ const transactionColumns = [
   "institution",
   "transaction_date",
   "posted_date",
+  "budget_month",
+  "date_precision",
   "description",
   "amount",
+  "source_amount",
   "currency",
+  "source_kind",
   "transaction_type",
   "category",
   "category_confidence",
@@ -73,35 +81,6 @@ function integer(value: unknown, fallback = 0): number {
 function bool(value: unknown, fallback = true): boolean {
   if (value === undefined || value === null) return fallback;
   return value !== false && value !== 0;
-}
-
-function aggregateComponents(
-  value: unknown,
-  label: string,
-): AggregateComponentRow[] {
-  if (value === null || value === undefined) return [];
-  return list(value, label).map((item, index) => ({
-    id: required(item.id, `${label}[${index}].id`),
-    amount_text: required(
-      item.amount_text,
-      `${label}[${index}].amount_text`,
-    ),
-    currency: required(item.currency, `${label}[${index}].currency`),
-    description: optional(item.description),
-    source_ref: optional(item.source_ref),
-    statement_id: optional(item.statement_id),
-    statement_name: optional(item.statement_name),
-    statement_path: optional(item.statement_path),
-    source_file_sha256: optional(item.source_file_sha256),
-    source_page: integer(item.source_page) || null,
-    source_line_start: integer(item.source_line_start) || null,
-    source_line_end: integer(item.source_line_end) || null,
-    raw_text: optional(item.raw_text),
-    transaction_date: optional(item.transaction_date),
-    source_amount_text: optional(item.source_amount_text),
-    match_confidence: optional(item.match_confidence),
-    match_method: optional(item.match_method),
-  }));
 }
 
 async function stableId(prefix: string, value: string) {
@@ -154,8 +133,13 @@ export async function importFinanceBundle(
   payloadValue: unknown,
 ): Promise<{ data: FinanceData; imported: number }> {
   const payload = record(payloadValue, "import bundle");
+  if (payload.kind === "our-finances-v2") {
+    return importCanonicalLedger(current, payload);
+  }
   if (payload.kind === "our-finances-legacy-v1") {
-    return importLegacyBundle(current, payload);
+    throw new Error(
+      "This workbook migration is obsolete. Convert it to canonical transactions first.",
+    );
   }
   if (payload.schema_version === "1.0.0" && payload.manifest) {
     return importStatementBundle(current, payload);
@@ -163,10 +147,13 @@ export async function importFinanceBundle(
   throw new Error("Unsupported import bundle");
 }
 
-async function importLegacyBundle(
-  current: FinanceData,
+async function importCanonicalLedger(
+  _current: FinanceData,
   payload: UnknownRecord,
 ): Promise<{ data: FinanceData; imported: number }> {
+  if (payload.mode !== "replace") {
+    throw new Error("Canonical ledger migrations must explicitly replace data");
+  }
   const accounts = list(payload.accounts, "accounts").map(
     (item) =>
       ({
@@ -178,6 +165,8 @@ async function importLegacyBundle(
         account_type: optional(item.account_type),
         currency: required(item.currency, "account.currency"),
         asset_symbol: optional(item.asset_symbol),
+        entry_mode:
+          item.entry_mode === "manual" ? "manual" : ("statement" as const),
         active: bool(item.active),
       }) as AccountRow,
   );
@@ -191,30 +180,6 @@ async function importLegacyBundle(
         sort_order: integer(item.sort_order),
         active: bool(item.active),
       }) as CategoryRow,
-  );
-  const aggregates = list(payload.aggregates, "aggregates").map(
-    (item) =>
-      ({
-        ...item,
-        id: required(item.id, "aggregate.id"),
-        month: required(item.month, "aggregate.month"),
-        kind: required(item.kind, "aggregate.kind"),
-        account_id: optional(item.account_id),
-        category_id: optional(item.category_id),
-        label: optional(item.label),
-        amount_text: optional(item.amount_text),
-        currency: optional(item.currency),
-        amount_mxn_text: optional(item.amount_mxn_text),
-        amount_usd_text: optional(item.amount_usd_text),
-        components: aggregateComponents(
-          item.components,
-          `aggregate[${String(item.id ?? "unknown")}].components`,
-        ),
-        verification_status: required(
-          item.verification_status,
-          "aggregate.verification_status",
-        ),
-      }) as AggregateRow,
   );
   const balances = list(payload.balances, "balances").map(
     (item) =>
@@ -243,25 +208,7 @@ async function importLegacyBundle(
         updated_at: optional(item.updated_at),
       }) as PriceRow,
   );
-  const issues = list(payload.issues, "issues").map(
-    (item) =>
-      ({
-        ...item,
-        id: required(item.id, "issue.id"),
-        severity: required(item.severity, "issue.severity"),
-        month: optional(item.month),
-        account_id: optional(item.account_id),
-        title: required(item.title, "issue.title"),
-        detail: required(item.detail, "issue.detail"),
-        status: required(item.status, "issue.status"),
-        source_ref: optional(item.source_ref),
-      }) as IssueRow,
-  );
-  const statements = (
-    Array.isArray(payload.statements)
-      ? list(payload.statements, "statements")
-      : []
-  ).map(
+  const statements = list(payload.statements, "statements").map(
     (item) =>
       ({
         ...item,
@@ -292,25 +239,73 @@ async function importLegacyBundle(
         imported_at: required(item.imported_at, "statement.imported_at"),
       }) as StatementRow,
   );
+  const transactions = list(payload.transactions, "transactions").map(
+    (item) =>
+      ({
+        ...item,
+        id: required(item.id, "transaction.id"),
+        statement_id: optional(item.statement_id),
+        account_id: required(item.account_id, "transaction.account_id"),
+        category_id: optional(item.category_id),
+        transaction_date: optional(item.transaction_date),
+        posted_date: optional(item.posted_date),
+        description: required(item.description, "transaction.description"),
+        amount_text: required(item.amount_text, "transaction.amount_text"),
+        currency: required(item.currency, "transaction.currency"),
+        transaction_type:
+          optional(item.transaction_type) ?? "unknown",
+        category_confidence: optional(item.category_confidence),
+        categorization_source: optional(item.categorization_source),
+        review_status: required(
+          item.review_status,
+          "transaction.review_status",
+        ),
+        source_kind:
+          item.source_kind === "manual"
+            ? "manual"
+            : item.source_kind === "source_gap"
+              ? "source_gap"
+              : "statement",
+        source_page: integer(item.source_page) || null,
+        source_line_start: integer(item.source_line_start) || null,
+        source_line_end: integer(item.source_line_end) || null,
+        raw_text: optional(item.raw_text),
+      }) as TransactionRow,
+  );
+  const issues = list(payload.issues, "issues").map(
+    (item) =>
+      ({
+        ...item,
+        id: required(item.id, "issue.id"),
+        severity: required(item.severity, "issue.severity"),
+        month: optional(item.month),
+        account_id: optional(item.account_id),
+        title: required(item.title, "issue.title"),
+        detail: required(item.detail, "issue.detail"),
+        status: required(item.status, "issue.status"),
+        source_ref: optional(item.source_ref),
+      }) as IssueRow,
+  );
   const data = withDerivedMonths({
-    ...current,
-    accounts: mergeById(current.accounts, accounts),
-    categories: mergeById(current.categories, categories),
-    aggregates: mergeById(current.aggregates, aggregates),
-    balances: mergeById(current.balances, balances),
-    prices: mergeById(current.prices, prices),
-    statements: mergeById(current.statements, statements),
-    issues: mergeById(current.issues, issues),
+    accounts,
+    categories,
+    aggregates: [],
+    balances,
+    prices,
+    statements,
+    transactions,
+    issues,
+    months: [],
   });
   return {
     data,
     imported:
       accounts.length +
       categories.length +
-      aggregates.length +
       balances.length +
       prices.length +
       statements.length +
+      transactions.length +
       issues.length,
   };
 }
@@ -357,6 +352,7 @@ async function importStatementBundle(
         account_type: optional(item.account_type) ?? "unknown",
         currency: required(item.currency, "account.currency"),
         asset_symbol: optional(item.symbol),
+        entry_mode: "statement",
         active: true,
         created_at: now,
       }) as AccountRow,
@@ -399,6 +395,7 @@ async function importStatementBundle(
       manifest.source_basename,
       "manifest.source_basename",
     ),
+    source_relative_path: optional(manifest.source_relative_path),
     institution: optional(manifest.detected_institution),
     account_id: optional(firstSection.account_section_id),
     period_start: optional(firstSection.period_start),
@@ -433,6 +430,9 @@ async function importStatementBundle(
         balance_text: closingBalance,
         currency: required(item.currency, "section.currency"),
         source_ref: `${statementId} closing balance`,
+        balance_kind: "closing",
+        source_kind: "statement",
+        statement_id: statementId,
         verification_status: reconciliationStatus,
       } as BalanceRow,
     ];
@@ -460,6 +460,7 @@ async function importStatementBundle(
       category_confidence: optional(item.category_confidence),
       categorization_source: optional(item.categorization_source),
       review_status: optional(item.review_status) ?? "needs_review",
+      source_kind: "statement",
       fee_text: optional(item.fee),
       balance_text: optional(item.balance),
       quantity_text: optional(item.quantity),
@@ -520,191 +521,61 @@ export function reviewTransaction(
 export function withDerivedMonths(data: FinanceData): FinanceData {
   const months = [
     ...new Set([
-      ...data.aggregates.map((row) => row.month),
       ...data.transactions
-        .map((row) => row.transaction_date?.slice(0, 7))
+        .map((row) => transactionMonth(row))
         .filter((value): value is string => Boolean(value)),
+      ...data.balances
+        .filter((row) => row.balance_kind !== "opening")
+        .map((row) => row.as_of_date.slice(0, 7))
+        .filter((value) => /^\d{4}-\d{2}$/.test(value)),
     ]),
   ].sort();
   return { ...data, months };
 }
 
 export function deriveFinanceView(source: FinanceData): FinanceData {
-  const data = normalizeFinanceData(source);
-  const storedMonths = new Set(data.aggregates.map((row) => row.month));
-  const transactions = data.transactions.filter((transaction) => {
-    const month = transaction.transaction_date?.slice(0, 7);
-    return Boolean(month && !storedMonths.has(month));
-  });
-  if (!transactions.length) return data;
+  return deriveLedgerData(normalizeFinanceData(source)) as FinanceData;
+}
 
-  const categories = new Map(data.categories.map((item) => [item.id, item]));
-  const accounts = new Map(data.accounts.map((item) => [item.id, item]));
-  const usdToMxn = findUsdToMxnRate(data.prices);
-  const cells = new Map<string, AggregateRow>();
+export type ManualTransactionInput = {
+  accountId: string;
+  categoryId: string;
+  transactionDate: string;
+  description: string;
+  amountText: string;
+  notes?: string | null;
+};
 
-  for (const transaction of transactions) {
-    const month = transaction.transaction_date?.slice(0, 7);
-    if (!month || !transaction.category_id) continue;
-    const account = accounts.get(transaction.account_id);
-    const currency = transaction.currency || account?.currency || "MXN";
-    const key = [month, transaction.category_id, transaction.account_id].join(":");
-    const amount = Number(transaction.amount_text);
-    if (!Number.isFinite(amount)) continue;
-    const converted = convertAmount(amount, currency, usdToMxn);
-    const current = cells.get(key);
-    cells.set(key, {
-      id: `derived:cell:${key}`,
-      month,
-      kind: "cell",
-      account_id: transaction.account_id,
-      category_id: transaction.category_id,
-      label: categories.get(transaction.category_id)?.label ?? null,
-      amount_text: String(numberOrZero(current?.amount_text) + amount),
-      currency,
-      amount_mxn_text: String(
-        numberOrZero(current?.amount_mxn_text) + converted.mxn,
-      ),
-      amount_usd_text: String(
-        numberOrZero(current?.amount_usd_text) + converted.usd,
-      ),
-      source_ref: "canonical statement transactions",
-      verification_status: "derived_from_canonical_transactions",
-    });
-  }
+export function addManualTransaction(
+  current: FinanceData,
+  input: ManualTransactionInput,
+): { data: FinanceData; transaction: TransactionRow } {
+  const result = createManualRecord(current, input) as {
+    data: FinanceData;
+    transaction: TransactionRow;
+  };
+  return { ...result, data: withDerivedMonths(result.data) };
+}
 
-  const categorySummaries = new Map<string, AggregateRow>();
-  for (const cell of cells.values()) {
-    if (!cell.category_id) continue;
-    const key = `${cell.month}:${cell.category_id}`;
-    const current = categorySummaries.get(key);
-    categorySummaries.set(key, {
-      id: `derived:category:${key}`,
-      month: cell.month,
-      kind: "category_summary",
-      account_id: null,
-      category_id: cell.category_id,
-      label: categories.get(cell.category_id)?.label ?? cell.label,
-      amount_text: null,
-      currency: null,
-      amount_mxn_text: String(
-        numberOrZero(current?.amount_mxn_text) +
-          numberOrZero(cell.amount_mxn_text),
-      ),
-      amount_usd_text: String(
-        numberOrZero(current?.amount_usd_text) +
-          numberOrZero(cell.amount_usd_text),
-      ),
-      source_ref: "canonical statement transactions",
-      verification_status: "derived_from_canonical_transactions",
-    });
-  }
+export function editManualTransaction(
+  current: FinanceData,
+  transactionId: string,
+  input: ManualTransactionInput,
+): { data: FinanceData; transaction: TransactionRow } {
+  const result = updateManualRecord(current, transactionId, input) as {
+    data: FinanceData;
+    transaction: TransactionRow;
+  };
+  return { ...result, data: withDerivedMonths(result.data) };
+}
 
-  const monthSummaries: AggregateRow[] = [];
-  const transactionMonths = new Set(
-    transactions
-      .map((item) => item.transaction_date?.slice(0, 7))
-      .filter((value): value is string => Boolean(value)),
+export function removeManualTransaction(
+  current: FinanceData,
+  transactionId: string,
+): FinanceData {
+  return withDerivedMonths(
+    deleteManualRecord(current, transactionId) as FinanceData,
   );
-  for (const month of transactionMonths) {
-    const rows = [...categorySummaries.values()].filter(
-      (item) => item.month === month,
-    );
-    for (const currency of ["MXN", "USD"] as const) {
-      const field =
-        currency === "MXN" ? "amount_mxn_text" : "amount_usd_text";
-      const income = rows
-        .filter(
-          (row) => categories.get(row.category_id ?? "")?.group_name === "income",
-        )
-        .reduce((sum, row) => sum + numberOrZero(row[field]), 0);
-      const spending = rows
-        .filter(
-          (row) =>
-            categories.get(row.category_id ?? "")?.group_name === "spending",
-        )
-        .reduce((sum, row) => sum + numberOrZero(row[field]), 0);
-      const net = rows.reduce(
-        (sum, row) => sum + numberOrZero(row[field]),
-        0,
-      );
-      for (const [label, value] of [
-        ["income", income],
-        ["spending", spending],
-        ["market", 0],
-        ["net", net],
-      ] as const) {
-        const id = `derived:summary:${month}:${label}`;
-        let summary = monthSummaries.find((item) => item.id === id);
-        if (!summary) {
-          summary = {
-            id,
-            month,
-            kind: "month_summary",
-            account_id: null,
-            category_id: null,
-            label,
-            amount_text: null,
-            currency: null,
-            amount_mxn_text: null,
-            amount_usd_text: null,
-            source_ref: "canonical statement transactions",
-            verification_status: "derived_from_canonical_transactions",
-          };
-          monthSummaries.push(summary);
-        }
-        summary[field] = String(value);
-      }
-    }
-  }
-
-  return withDerivedMonths({
-    ...data,
-    aggregates: [
-      ...data.aggregates,
-      ...cells.values(),
-      ...categorySummaries.values(),
-      ...monthSummaries,
-    ],
-  });
-}
-
-function numberOrZero(value: string | null | undefined): number {
-  const parsed = Number(value ?? 0);
-  return Number.isFinite(parsed) ? parsed : 0;
-}
-
-function findUsdToMxnRate(prices: PriceRow[]): number | null {
-  const pairs = new Map<string, Partial<Record<"MXN" | "USD", number>>>();
-  for (const price of prices) {
-    if (price.quote_currency !== "MXN" && price.quote_currency !== "USD") {
-      continue;
-    }
-    const value = Number(price.value_text);
-    if (!Number.isFinite(value) || value === 0) continue;
-    const key = `${price.symbol}:${price.kind}`;
-    const pair = pairs.get(key) ?? {};
-    pair[price.quote_currency] = value;
-    pairs.set(key, pair);
-  }
-  for (const pair of pairs.values()) {
-    if (pair.MXN && pair.USD) return pair.MXN / pair.USD;
-  }
-  return null;
-}
-
-function convertAmount(
-  amount: number,
-  currency: string,
-  usdToMxn: number | null,
-): { mxn: number; usd: number } {
-  if (currency === "MXN") {
-    return { mxn: amount, usd: usdToMxn ? amount / usdToMxn : 0 };
-  }
-  if (currency === "USD") {
-    return { mxn: usdToMxn ? amount * usdToMxn : 0, usd: amount };
-  }
-  return { mxn: 0, usd: 0 };
 }
 
 function csvCell(value: unknown) {
@@ -733,9 +604,13 @@ export function exportTransactionsCsv(data: FinanceData): string {
         institution: account?.institution ?? "",
         transaction_date: transaction.transaction_date,
         posted_date: transaction.posted_date,
+        budget_month: transaction.budget_month,
+        date_precision: transaction.date_precision,
         description: transaction.description,
         amount: transaction.amount_text,
+        source_amount: transaction.source_amount_text,
         currency: transaction.currency,
+        source_kind: transaction.source_kind,
         transaction_type: transaction.transaction_type,
         category: category?.label ?? "",
         category_confidence: transaction.category_confidence,

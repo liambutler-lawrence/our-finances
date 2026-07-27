@@ -8,10 +8,15 @@ import type {
   TransactionRow,
 } from "./finance-data";
 import { getCellBreakdown } from "./cell-breakdown.mjs";
-import { deriveFinanceView } from "./ledger";
+import {
+  accountEntryMode,
+  FORMULA_CATEGORY_LABELS,
+  transactionMonth,
+} from "./derive-ledger.mjs";
+import { deriveFinanceView, type ManualTransactionInput } from "./ledger";
 import { money, signedMoney } from "./money.mjs";
 
-type Tab = "overview" | "month" | "review" | "data";
+type Tab = "overview" | "month" | "review" | "manual" | "data";
 type CellBreakdownItem = ReturnType<typeof getCellBreakdown>[number];
 type LedgerCellInspection = {
   key: string;
@@ -59,6 +64,9 @@ export function FinanceApp({
   user,
   onImportBundle,
   onReviewTransaction,
+  onCreateManualTransaction,
+  onUpdateManualTransaction,
+  onDeleteManualTransaction,
   onExportTransactions,
   onExportLedger,
 }: {
@@ -69,6 +77,14 @@ export function FinanceApp({
     transaction: TransactionRow,
     categoryId: string,
   ) => Promise<void>;
+  onCreateManualTransaction: (
+    input: ManualTransactionInput,
+  ) => Promise<TransactionRow>;
+  onUpdateManualTransaction: (
+    transaction: TransactionRow,
+    input: ManualTransactionInput,
+  ) => Promise<TransactionRow>;
+  onDeleteManualTransaction: (transaction: TransactionRow) => Promise<void>;
   onExportTransactions: () => void;
   onExportLedger: () => void;
 }) {
@@ -102,12 +118,12 @@ export function FinanceApp({
       .filter((category) => category.group_name === "spending")
       .map((category) => category.id),
   );
-  const categoryRows = monthRows
+  const categorySummaryRows = monthRows.filter(
+    (row) => row.kind === "category_summary" && row.category_id !== null,
+  );
+  const categoryRows = categorySummaryRows
     .filter(
-      (row) =>
-        row.kind === "category_summary" &&
-        row.category_id !== null &&
-        spendingCategoryIds.has(row.category_id),
+      (row) => row.category_id !== null && spendingCategoryIds.has(row.category_id),
     )
     .sort(
       (a, b) =>
@@ -119,8 +135,19 @@ export function FinanceApp({
     activeAccountIds.has(account.id),
   );
   const pendingCount = data.transactions.filter(
-    (transaction) => transaction.review_status !== "reviewed",
+    (transaction) =>
+      transaction.source_kind !== "manual" &&
+      transaction.review_status !== "reviewed",
   ).length;
+  const sourceGapCount = data.transactions.filter(
+    (transaction) => transaction.source_kind === "source_gap",
+  ).length;
+  const statementTransactions = data.transactions.filter(
+    (transaction) => transaction.source_kind !== "manual",
+  );
+  const manualAccounts = data.accounts.filter(
+    (account) => accountEntryMode(account) === "manual",
+  );
 
   const trend = data.months.map((value) => {
     const rows = data.aggregates.filter((row) => row.month === value);
@@ -152,7 +179,10 @@ export function FinanceApp({
     await onReviewTransaction(transaction, categoryId);
   }
 
-  const isEmpty = data.aggregates.length === 0 && data.statements.length === 0;
+  const isEmpty =
+    data.transactions.length === 0 &&
+    data.statements.length === 0 &&
+    data.balances.length === 0;
 
   return (
     <main className="app-shell">
@@ -186,6 +216,12 @@ export function FinanceApp({
             glyph="✓"
             badge={pendingCount || undefined}
             onClick={() => setTab("review")}
+          />
+          <NavButton
+            active={tab === "manual"}
+            label="Manual accounts"
+            glyph="＋"
+            onClick={() => setTab("manual")}
           />
           <NavButton
             active={tab === "data"}
@@ -386,7 +422,7 @@ export function FinanceApp({
             <article className="panel ledger-panel">
               <PanelHead
                 title={monthLabel(activeMonth)}
-                meta={`${activeAccounts.length} accounts · ${categoryRows.length} categories`}
+                meta={`${activeAccounts.length} accounts · ${cellRows.length} derived cells`}
               />
               <div className="ledger-scroll">
                 <table className="ledger-table">
@@ -408,12 +444,21 @@ export function FinanceApp({
                         cellRows.some((row) => row.category_id === category.id),
                       )
                       .map((category) => {
-                        const summary = categoryRows.find(
+                        const summary = categorySummaryRows.find(
                           (row) => row.category_id === category.id,
                         );
+                        const isFormula = FORMULA_CATEGORY_LABELS.has(
+                          category.label,
+                        );
                         return (
-                          <tr key={category.id}>
-                            <th>{category.label}</th>
+                          <tr
+                            key={category.id}
+                            className={isFormula ? "formula-row" : ""}
+                          >
+                            <th>
+                              {category.label}
+                              {isFormula ? <small>Derived</small> : null}
+                            </th>
                             {activeAccounts.map((account) => {
                               const row = cellRows.find(
                                 (item) =>
@@ -421,13 +466,14 @@ export function FinanceApp({
                                   item.account_id === account.id,
                               );
                               const amount = number(row?.amount_text);
+                              const hasValue = row?.amount_text != null;
                               const cellKey = [
                                 activeMonth,
                                 category.id,
                                 account.id,
                               ].join(":");
                               const inspectCell = () => {
-                                if (!amount) return;
+                                if (!hasValue) return;
                                 setInspectedCell({
                                   key: cellKey,
                                   month: activeMonth,
@@ -450,7 +496,7 @@ export function FinanceApp({
                                     amount < 0 ? "negative-number" : ""
                                   }`}
                                 >
-                                  {amount ? (
+                                  {hasValue ? (
                                     <button
                                       type="button"
                                       className="ledger-cell-trigger"
@@ -496,9 +542,9 @@ export function FinanceApp({
                 <strong>{pendingCount} transactions need a decision</strong>
               </div>
               <span>
+                {sourceGapCount} source gap{sourceGapCount === 1 ? "" : "s"} ·{" "}
                 {data.statements.filter((item) => item.validation_state === "blocked")
-                  .length || 0}{" "}
-                blocked statements
+                  .length || 0} blocked statements
               </span>
             </div>
             <div className="review-layout">
@@ -528,11 +574,11 @@ export function FinanceApp({
               </div>
               <article className="panel transaction-panel">
                 <PanelHead
-                  title="Unreviewed transactions"
-                  meta="Choose the final category"
+                  title="Found transactions"
+                  meta="Statement amounts are read-only; choose categories"
                 />
                 <div className="transaction-list">
-                  {data.transactions.map((transaction) => {
+                  {statementTransactions.map((transaction) => {
                     const account = data.accounts.find(
                       (item) => item.id === transaction.account_id,
                     );
@@ -553,9 +599,20 @@ export function FinanceApp({
                         <div className="transaction-copy">
                           <strong>{transaction.description}</strong>
                           <span>
-                            {account?.label ?? "Account"} · page{" "}
-                            {transaction.source_page ?? "—"}
+                            {account?.label ?? "Account"} ·{" "}
+                            {transaction.source_kind === "source_gap"
+                              ? "source statement still unmatched"
+                              : `page ${transaction.source_page ?? "—"}`}
                           </span>
+                          {transaction.source_kind === "source_gap" ? (
+                            <small className="source-gap-label">
+                              Needs statement matching
+                            </small>
+                          ) : transaction.match_confidence === "medium" ? (
+                            <small className="source-confidence">
+                              Statement match needs verification
+                            </small>
+                          ) : null}
                         </div>
                         <strong
                           className={
@@ -579,16 +636,21 @@ export function FinanceApp({
                           <option value="" disabled>
                             Choose category
                           </option>
-                          {data.categories.map((category) => (
-                            <option key={category.id} value={category.id}>
-                              {category.label}
-                            </option>
-                          ))}
+                          {data.categories
+                            .filter(
+                              (category) =>
+                                !FORMULA_CATEGORY_LABELS.has(category.label),
+                            )
+                            .map((category) => (
+                              <option key={category.id} value={category.id}>
+                                {category.label}
+                              </option>
+                            ))}
                         </select>
                       </div>
                     );
                   })}
-                  {!data.transactions.length ? (
+                  {!statementTransactions.length ? (
                     <div className="all-clear">
                       <span>✓</span>
                       <strong>Everything is reviewed</strong>
@@ -599,6 +661,18 @@ export function FinanceApp({
               </article>
             </div>
           </section>
+        ) : null}
+
+        {!isEmpty && tab === "manual" ? (
+          <ManualAccountsPanel
+            key={activeMonth}
+            data={data}
+            accounts={manualAccounts}
+            activeMonth={activeMonth}
+            onCreate={onCreateManualTransaction}
+            onUpdate={onUpdateManualTransaction}
+            onDelete={onDeleteManualTransaction}
+          />
         ) : null}
 
         {!isEmpty && tab === "data" ? (
@@ -724,6 +798,7 @@ export function FinanceApp({
 function tabTitle(tab: Tab) {
   if (tab === "month") return "Monthly ledger";
   if (tab === "review") return "Statement review";
+  if (tab === "manual") return "Manual accounts";
   if (tab === "data") return "Data & price lookups";
   return "Overview";
 }
@@ -810,6 +885,351 @@ function AccountStrip({
   );
 }
 
+function ManualAccountsPanel({
+  data,
+  accounts,
+  activeMonth,
+  onCreate,
+  onUpdate,
+  onDelete,
+}: {
+  data: FinanceData;
+  accounts: AccountRow[];
+  activeMonth: string;
+  onCreate: (input: ManualTransactionInput) => Promise<TransactionRow>;
+  onUpdate: (
+    transaction: TransactionRow,
+    input: ManualTransactionInput,
+  ) => Promise<TransactionRow>;
+  onDelete: (transaction: TransactionRow) => Promise<void>;
+}) {
+  const [accountId, setAccountId] = useState(accounts[0]?.id ?? "");
+  const [editing, setEditing] = useState<TransactionRow | null>(null);
+  const [status, setStatus] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [draft, setDraft] = useState({
+    transactionDate: `${activeMonth}-01`,
+    description: "",
+    amountText: "",
+    categoryId:
+      data.categories.find(
+        (category) =>
+          category.active !== false &&
+          !FORMULA_CATEGORY_LABELS.has(category.label),
+      )?.id ?? "",
+  });
+  const selectedAccount =
+    accounts.find((account) => account.id === accountId) ?? accounts[0];
+  const transactionCategories = data.categories.filter(
+    (category) =>
+      category.active !== false &&
+      !FORMULA_CATEGORY_LABELS.has(category.label),
+  );
+  const transactions = data.transactions
+    .filter(
+      (transaction) =>
+        transaction.source_kind === "manual" &&
+        transaction.account_id === selectedAccount?.id &&
+        transactionMonth(transaction) === activeMonth,
+    )
+    .sort(
+      (left, right) =>
+        String(right.transaction_date ?? "").localeCompare(
+          String(left.transaction_date ?? ""),
+        ) || right.id.localeCompare(left.id),
+    );
+  const accountCells = data.aggregates.filter(
+    (row) =>
+      row.kind === "cell" &&
+      row.month === activeMonth &&
+      row.account_id === selectedAccount?.id,
+  );
+  const formulaValue = (label: string) =>
+    number(accountCells.find((row) => row.label === label)?.amount_text);
+
+  function resetDraft() {
+    setEditing(null);
+    setDraft({
+      transactionDate: `${activeMonth}-01`,
+      description: "",
+      amountText: "",
+      categoryId: transactionCategories[0]?.id ?? "",
+    });
+  }
+
+  function beginEditing(transaction: TransactionRow) {
+    setEditing(transaction);
+    setStatus("");
+    setDraft({
+      transactionDate:
+        transaction.transaction_date ?? `${activeMonth}-01`,
+      description: transaction.description,
+      amountText: transaction.amount_text,
+      categoryId: transaction.category_id ?? transactionCategories[0]?.id ?? "",
+    });
+  }
+
+  async function submit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!selectedAccount) return;
+    setSaving(true);
+    setStatus("");
+    const input: ManualTransactionInput = {
+      accountId: selectedAccount.id,
+      categoryId: draft.categoryId,
+      transactionDate: draft.transactionDate,
+      description: draft.description,
+      amountText: draft.amountText,
+    };
+    try {
+      if (editing) {
+        await onUpdate(editing, input);
+        setStatus("Transaction updated in your private iCloud ledger.");
+      } else {
+        await onCreate(input);
+        setStatus("Transaction added to your private iCloud ledger.");
+      }
+      resetDraft();
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Could not save");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function remove(transaction: TransactionRow) {
+    if (!window.confirm(`Delete “${transaction.description}”?`)) return;
+    setSaving(true);
+    setStatus("");
+    try {
+      await onDelete(transaction);
+      if (editing?.id === transaction.id) resetDraft();
+      setStatus("Transaction deleted from your private iCloud ledger.");
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Could not delete");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  if (!selectedAccount) {
+    return (
+      <section className="page-stack">
+        <article className="panel all-clear">
+          <strong>No manually managed accounts yet</strong>
+          <p>Cash, in-transit, and work-debt accounts appear here.</p>
+        </article>
+      </section>
+    );
+  }
+
+  return (
+    <section className="page-stack">
+      <div className="ledger-note">
+        <span>Manual ledger</span>
+        Cash, in-transit, and work-debt transactions can be added and edited
+        directly. Their monthly totals remain derived.
+      </div>
+      <article className="panel manual-account-head">
+        <label>
+          <span>Account</span>
+          <select
+            value={selectedAccount.id}
+            onChange={(event) => {
+              setAccountId(event.target.value);
+              resetDraft();
+              setStatus("");
+            }}
+          >
+            {accounts.map((account) => (
+              <option key={account.id} value={account.id}>
+                {account.label}
+              </option>
+            ))}
+          </select>
+        </label>
+        <div className="manual-balance-metrics">
+          <Metric
+            label="Starting balance"
+            value={money(
+              formulaValue("ACTUAL STARTING BALANCE"),
+              selectedAccount.currency,
+            )}
+            helper="Prior balance snapshot"
+            tone="neutral"
+          />
+          <Metric
+            label="Total change"
+            value={signedMoney(
+              formulaValue("TOTAL CHANGE"),
+              selectedAccount.currency,
+            )}
+            helper={`${transactions.length} manual transactions`}
+            tone={
+              formulaValue("TOTAL CHANGE") >= 0 ? "positive" : "negative"
+            }
+          />
+          <Metric
+            label="Ending balance"
+            value={money(
+              formulaValue("ENDING BALANCE"),
+              selectedAccount.currency,
+            )}
+            helper="Starting balance + change"
+            tone="neutral"
+          />
+        </div>
+      </article>
+
+      <div className="manual-account-layout">
+        <article className="panel manual-entry-panel">
+          <p className="eyebrow">
+            {editing ? "Edit manual transaction" : "Add manual transaction"}
+          </p>
+          <h2>{selectedAccount.label}</h2>
+          <form className="manual-entry-form" onSubmit={submit}>
+            <label>
+              <span>Date</span>
+              <input
+                type="date"
+                required
+                value={draft.transactionDate}
+                onChange={(event) =>
+                  setDraft((current) => ({
+                    ...current,
+                    transactionDate: event.target.value,
+                  }))
+                }
+              />
+            </label>
+            <label>
+              <span>Description</span>
+              <input
+                required
+                value={draft.description}
+                onChange={(event) =>
+                  setDraft((current) => ({
+                    ...current,
+                    description: event.target.value,
+                  }))
+                }
+                placeholder="What happened?"
+              />
+            </label>
+            <label>
+              <span>Signed amount ({selectedAccount.currency})</span>
+              <input
+                required
+                inputMode="decimal"
+                value={draft.amountText}
+                onChange={(event) =>
+                  setDraft((current) => ({
+                    ...current,
+                    amountText: event.target.value,
+                  }))
+                }
+                placeholder="-250 or 1000"
+              />
+            </label>
+            <label>
+              <span>Category</span>
+              <select
+                required
+                value={draft.categoryId}
+                onChange={(event) =>
+                  setDraft((current) => ({
+                    ...current,
+                    categoryId: event.target.value,
+                  }))
+                }
+              >
+                {transactionCategories.map((category) => (
+                  <option key={category.id} value={category.id}>
+                    {category.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <div className="manual-entry-actions">
+              <button className="primary-button" type="submit" disabled={saving}>
+                {saving
+                  ? "Saving…"
+                  : editing
+                    ? "Save changes"
+                    : "Add transaction"}
+              </button>
+              {editing ? (
+                <button
+                  className="secondary-button"
+                  type="button"
+                  onClick={resetDraft}
+                  disabled={saving}
+                >
+                  Cancel
+                </button>
+              ) : null}
+            </div>
+            {status ? <p className="import-status">{status}</p> : null}
+          </form>
+        </article>
+
+        <article className="panel manual-transaction-panel">
+          <PanelHead
+            title={monthLabel(activeMonth)}
+            meta={`${transactions.length} editable transactions`}
+          />
+          <div className="manual-transaction-list">
+            {transactions.map((transaction) => (
+              <div className="manual-transaction-row" key={transaction.id}>
+                <div>
+                  <strong>{transaction.description}</strong>
+                  <span>
+                    {transaction.transaction_date ?? "Month only"} ·{" "}
+                    {data.categories.find(
+                      (category) => category.id === transaction.category_id,
+                    )?.label ?? "Needs category"}
+                  </span>
+                </div>
+                <strong
+                  className={
+                    number(transaction.amount_text) < 0
+                      ? "negative-number"
+                      : "positive-number"
+                  }
+                >
+                  {signedMoney(
+                    number(transaction.amount_text),
+                    transaction.currency,
+                  )}
+                </strong>
+                <div className="manual-row-actions">
+                  <button type="button" onClick={() => beginEditing(transaction)}>
+                    Edit
+                  </button>
+                  <button
+                    type="button"
+                    className="danger-button"
+                    onClick={() => void remove(transaction)}
+                  >
+                    Delete
+                  </button>
+                </div>
+              </div>
+            ))}
+            {!transactions.length ? (
+              <div className="all-clear">
+                <span>＋</span>
+                <strong>No transactions this month</strong>
+                <p>Add the first entry with the form.</p>
+              </div>
+            ) : null}
+          </div>
+        </article>
+      </div>
+    </section>
+  );
+}
+
 function StatusPill({ status }: { status: string }) {
   const label =
     status === "ready_for_review"
@@ -883,11 +1303,22 @@ function LedgerCellInspector({
                     <span>
                       {[item.date, item.statementName]
                         .filter(Boolean)
-                        .join(" · ") || "Legacy workbook component"}
+                        .join(" · ") ||
+                        (item.sourceKind === "manual"
+                          ? "Manual transaction"
+                          : item.sourceKind === "source_gap"
+                            ? "Source gap"
+                            : item.sourceKind === "formula"
+                              ? "Derived formula"
+                              : "Balance snapshot")}
                     </span>
                     {item.matchConfidence === "medium" ? (
                       <small className="source-confidence">
                         Statement match needs verification
+                      </small>
+                    ) : item.sourceKind === "source_gap" ? (
+                      <small className="source-gap-label">
+                        Needs statement matching
                       </small>
                     ) : null}
                   </div>
@@ -932,7 +1363,7 @@ function LedgerCellInspector({
         </>
       ) : (
         <p className="inspector-empty">
-          No itemized source is stored for this legacy total yet.
+          No transactions or balance inputs contribute to this value.
         </p>
       )}
     </aside>

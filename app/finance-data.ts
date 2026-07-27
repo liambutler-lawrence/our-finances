@@ -6,6 +6,7 @@ export type AccountRow = {
   account_type: string | null;
   currency: string;
   asset_symbol: string | null;
+  entry_mode?: "statement" | "manual";
   active?: boolean;
   created_at?: string | null;
 };
@@ -16,26 +17,6 @@ export type CategoryRow = {
   group_name: string;
   sort_order: number;
   active?: boolean;
-};
-
-export type AggregateComponentRow = {
-  id: string;
-  amount_text: string;
-  currency: string;
-  description: string | null;
-  source_ref: string | null;
-  statement_id?: string | null;
-  statement_name?: string | null;
-  statement_path?: string | null;
-  source_file_sha256?: string | null;
-  source_page?: number | null;
-  source_line_start?: number | null;
-  source_line_end?: number | null;
-  raw_text?: string | null;
-  transaction_date?: string | null;
-  source_amount_text?: string | null;
-  match_confidence?: string | null;
-  match_method?: string | null;
 };
 
 export type AggregateRow = {
@@ -50,7 +31,8 @@ export type AggregateRow = {
   amount_mxn_text: string | null;
   amount_usd_text: string | null;
   source_ref?: string | null;
-  components?: AggregateComponentRow[];
+  formula_kind?: string | null;
+  formula?: string | null;
   verification_status: string;
 };
 
@@ -61,6 +43,11 @@ export type BalanceRow = {
   balance_text: string;
   currency: string;
   source_ref?: string | null;
+  balance_kind?: "opening" | "closing";
+  source_kind?: "statement" | "manual_snapshot" | "source_gap";
+  statement_id?: string | null;
+  source_page?: number | null;
+  raw_text?: string | null;
   verification_status: string;
 };
 
@@ -95,11 +82,13 @@ export type StatementRow = {
 
 export type TransactionRow = {
   id: string;
-  statement_id: string;
+  statement_id: string | null;
   account_id: string;
   category_id: string | null;
   transaction_date: string | null;
   posted_date?: string | null;
+  budget_month?: string | null;
+  date_precision?: "day" | "month";
   description: string;
   amount_text: string;
   currency: string;
@@ -107,6 +96,7 @@ export type TransactionRow = {
   category_confidence: string | null;
   categorization_source?: string | null;
   review_status: string;
+  source_kind?: "statement" | "manual" | "source_gap";
   fee_text?: string | null;
   balance_text?: string | null;
   quantity_text?: string | null;
@@ -117,7 +107,11 @@ export type TransactionRow = {
   source_line_start?: number | null;
   source_line_end?: number | null;
   raw_text?: string | null;
+  source_amount_text?: string | null;
+  match_confidence?: string | null;
   notes?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
   reviewed_at?: string | null;
 };
 

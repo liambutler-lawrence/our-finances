@@ -7,7 +7,7 @@ const CLOUDKIT_SCRIPT =
   "https://cdn.apple-cloudkit.com/ck/2/cloudkit.js";
 const LEDGER_RECORD_NAME = "ledger-v1";
 const LEDGER_RECORD_TYPE = "FinanceLedger";
-const LEDGER_SCHEMA_VERSION = "1.0.0";
+const LEDGER_SCHEMA_VERSION = "2.0.0";
 const MAX_ENCODED_PAYLOAD_BYTES = 900_000;
 
 export type CloudKitIdentity = {

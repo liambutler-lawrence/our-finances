@@ -110,27 +110,29 @@ Promote schema changes through CloudKit Console before switching
 - Client-side canonical import, category review, derivation, and export
 
 The monthly UI is a pure view of canonical transactions, balance snapshots,
-price snapshots, and preserved legacy workbook aggregates. New display
-features are source-controlled application changes rather than customizable
-per-user layouts.
+and price snapshots. Total change, starting balance, ending balance, and
+balance error are recalculated from those inputs every time. No monthly cell or
+formula result is stored as an aggregate.
 
-Historical workbook months remain as verified legacy aggregates. Canonical
-statement transactions drive a month when no legacy aggregate exists for that
-month, preventing an imported statement from silently double-counting a
-historical spreadsheet month.
+Statement-backed transactions preserve their source file, page, line, raw
+text, and exact source amount. Their amount and description are read-only in
+the app; category is the reviewable field. Cash, in-transit, and work-debt
+accounts use the manual account ledger, where transactions can be added,
+edited, or deleted directly.
 
-The legacy workbook migration does not invent line-item transactions that were
-not present in the workbook. Historical statement PDFs should be backfilled in
-reconciled batches through the statement-import skill; each imported statement
-then appears in the review queue with its exact source rows.
+Historical amounts that are not yet tied to a statement line are canonical
+`source_gap` transactions. They remain visible in totals and the review queue
+without being misrepresented as source-backed. Completing the statement
+backfill replaces those gaps with reconciled source records.
 
 ## Import contracts
 
 Two private JSON formats are accepted:
 
 - `1.0.0` canonical statement bundles produced by the repository skill.
-- `our-finances-legacy-v1` migration bundles for historical workbook
-  aggregates, balances, prices, and audit findings.
+- `our-finances-v2` full-ledger migrations containing canonical transactions,
+  balance snapshots, prices, statements, and audit findings. This format
+  explicitly replaces the private ledger and never accepts stored aggregates.
 
 Imports are idempotent by stable record IDs. The CSV export includes exact
 source amounts, dates, raw text, coordinates, metadata, categories, and review

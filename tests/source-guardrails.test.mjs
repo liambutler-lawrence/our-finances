@@ -2,6 +2,15 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { getCellBreakdown } from "../app/cell-breakdown.mjs";
+import {
+  accountEntryMode,
+  deriveLedgerData,
+} from "../app/derive-ledger.mjs";
+import {
+  createManualTransaction,
+  deleteManualTransaction,
+  updateManualTransaction,
+} from "../app/manual-transactions.mjs";
 import { money, signedMoney } from "../app/money.mjs";
 
 const root = new URL("../", import.meta.url);
@@ -39,7 +48,7 @@ test("uses per-user private CloudKit without a shared data binding", async () =>
   assert.match(cloudkit, /NEXT_PUBLIC_CLOUDKIT_ENVIRONMENT \?\? "production"/);
   assert.doesNotMatch(cloudkit, /publicCloudDatabase/);
   assert.doesNotMatch(cloudkit, /serverToServer/);
-  assert.match(ledger, /our-finances-legacy-v1/);
+  assert.match(ledger, /our-finances-v2/);
   assert.match(ledger, /schema_version/);
   assert.match(ledger, /raw_text/);
   assert.match(ledger, /source_line_start/);
@@ -116,7 +125,7 @@ test("prefers statement transactions for ledger cell breakdowns", () => {
       aggregate: {
         components: [
           {
-            id: "legacy-one",
+            id: "obsolete-one",
             amount_text: "-12.34",
             currency: "USD",
           },
@@ -129,28 +138,28 @@ test("prefers statement transactions for ledger cell breakdowns", () => {
   );
 
   assert.equal(items.length, 1);
-  assert.equal(items[0].kind, "transaction");
+  assert.equal(items[0].kind, "statement_transaction");
   assert.equal(items[0].statementName, "sample-statement.pdf");
   assert.equal(items[0].sourcePage, 2);
   assert.equal(items[0].rawText, "Example source line");
 });
 
-test("uses protected workbook components for legacy ledger cells", () => {
+test("never falls back to obsolete aggregate components", () => {
   const items = getCellBreakdown(
-    { statements: [], transactions: [] },
+    { statements: [], transactions: [], balances: [] },
     {
       aggregate: {
         currency: "MXN",
         components: [
           {
-            id: "legacy-one",
+            id: "obsolete-one",
             amount_text: "-100",
             currency: "MXN",
             description: "Workbook amount 1",
             source_ref: "Budget workbook · June 2025 · B12",
           },
           {
-            id: "legacy-two",
+            id: "obsolete-two",
             amount_text: "-25",
             currency: "MXN",
             description: "Workbook amount 2",
@@ -164,54 +173,219 @@ test("uses protected workbook components for legacy ledger cells", () => {
     },
   );
 
-  assert.deepEqual(
-    items.map((item) => item.amountText),
-    ["-100", "-25"],
-  );
-  assert.ok(items.every((item) => item.kind === "workbook_component"));
+  assert.deepEqual(items, []);
 });
 
-test("keeps direct statement evidence attached to historical components", () => {
+test("distinguishes manual transactions and unresolved source gaps", () => {
   const items = getCellBreakdown(
-    { statements: [], transactions: [] },
     {
-      aggregate: {
-        currency: "USD",
-        components: [
-          {
-            id: "mapped-one",
-            amount_text: "-42.5",
-            currency: "USD",
-            description: "Example source description",
-            statement_id: "statement-example",
-            statement_name: "example-statement.pdf",
-            statement_path: "Owner/example-statement.pdf",
-            source_page: 3,
-            source_line_start: 21,
-            source_line_end: 21,
-            raw_text: "Example source description 42.50",
-            match_confidence: "high",
-          },
-          {
-            id: "unmapped-one",
-            amount_text: "-7.5",
-            currency: "USD",
-            description: "Workbook amount",
-            source_ref: "Private workbook source",
-          },
-        ],
-      },
+      statements: [],
+      balances: [],
+      transactions: [
+        {
+          id: "manual-one",
+          statement_id: null,
+          account_id: "account-demo",
+          category_id: "category-demo",
+          transaction_date: "2026-06-04",
+          description: "Cash purchase",
+          amount_text: "-42.5",
+          currency: "USD",
+          source_kind: "manual",
+        },
+        {
+          id: "gap-one",
+          statement_id: null,
+          account_id: "account-demo",
+          category_id: "category-demo",
+          transaction_date: "2026-06-05",
+          description: "Historical source gap",
+          amount_text: "-7.5",
+          currency: "USD",
+          source_kind: "source_gap",
+        },
+      ],
+    },
+    {
+      aggregate: { currency: "USD" },
       month: "2025-06",
       accountId: "account-demo",
       categoryId: "category-demo",
     },
   );
 
-  assert.equal(items.length, 2);
-  assert.equal(items[0].kind, "statement_component");
-  assert.equal(items[0].statementName, "example-statement.pdf");
-  assert.equal(items[0].statementPath, "Owner/example-statement.pdf");
-  assert.equal(items[0].sourcePage, 3);
-  assert.equal(items[0].matchConfidence, "high");
-  assert.equal(items[1].kind, "workbook_component");
+  assert.equal(items.length, 0);
+
+  const juneItems = getCellBreakdown(
+    {
+      statements: [],
+      balances: [],
+      transactions: [
+        {
+          id: "manual-one",
+          statement_id: null,
+          account_id: "account-demo",
+          category_id: "category-demo",
+          transaction_date: "2026-06-04",
+          description: "Cash purchase",
+          amount_text: "-42.5",
+          currency: "USD",
+          source_kind: "manual",
+        },
+        {
+          id: "gap-one",
+          statement_id: null,
+          account_id: "account-demo",
+          category_id: "category-demo",
+          transaction_date: "2026-06-05",
+          description: "Historical source gap",
+          amount_text: "-7.5",
+          currency: "USD",
+          source_kind: "source_gap",
+        },
+      ],
+    },
+    {
+      aggregate: { currency: "USD" },
+      month: "2026-06",
+      accountId: "account-demo",
+      categoryId: "category-demo",
+    },
+  );
+  assert.deepEqual(
+    juneItems.map((item) => item.kind),
+    ["manual_transaction", "source_gap"],
+  );
+});
+
+test("derives monthly cells and balance formulas from transactions and snapshots", () => {
+  const data = deriveLedgerData({
+    accounts: [
+      {
+        id: "account-demo",
+        label: "Example account",
+        currency: "USD",
+        entry_mode: "statement",
+      },
+    ],
+    categories: [
+      {
+        id: "category-demo",
+        label: "Groceries",
+        group_name: "spending",
+        sort_order: 10,
+      },
+    ],
+    transactions: [
+      {
+        id: "transaction-one",
+        account_id: "account-demo",
+        category_id: "category-demo",
+        transaction_date: "2026-06-04",
+        amount_text: "-25",
+        currency: "USD",
+        source_kind: "statement",
+      },
+      {
+        id: "transaction-two",
+        account_id: "account-demo",
+        category_id: "category-demo",
+        transaction_date: "2026-06-05",
+        amount_text: "-10",
+        currency: "USD",
+        source_kind: "statement",
+      },
+    ],
+    balances: [
+      {
+        id: "opening",
+        account_id: "account-demo",
+        as_of_date: "2026-05-31",
+        balance_text: "100",
+        currency: "USD",
+        balance_kind: "opening",
+      },
+      {
+        id: "closing",
+        account_id: "account-demo",
+        as_of_date: "2026-06-30",
+        balance_text: "65",
+        currency: "USD",
+        balance_kind: "closing",
+      },
+    ],
+    prices: [],
+    statements: [],
+    issues: [],
+    aggregates: [
+      {
+        id: "obsolete",
+        month: "2026-06",
+        kind: "cell",
+        amount_text: "999",
+      },
+    ],
+  });
+  const cells = data.aggregates.filter(
+    (item) =>
+      item.kind === "cell" &&
+      item.account_id === "account-demo" &&
+      item.month === "2026-06",
+  );
+  const value = (label) =>
+    Number(cells.find((item) => item.label === label)?.amount_text);
+  assert.equal(value("Groceries"), -35);
+  assert.equal(value("ACTUAL STARTING BALANCE"), 100);
+  assert.equal(value("TOTAL CHANGE"), -35);
+  assert.equal(value("ENDING BALANCE"), 65);
+  assert.equal(value("ACTUAL ENDING BALANCE"), 65);
+  assert.equal(value("ERROR"), 0);
+  assert.equal(data.aggregates.some((item) => item.id === "obsolete"), false);
+});
+
+test("manual account transactions can be added, edited, and deleted", () => {
+  const base = {
+    accounts: [
+      {
+        id: "cash-demo",
+        label: "Cash demo",
+        currency: "USD",
+        entry_mode: "manual",
+      },
+    ],
+    categories: [
+      {
+        id: "category-demo",
+        label: "Groceries",
+        group_name: "spending",
+      },
+    ],
+    transactions: [],
+  };
+  assert.equal(accountEntryMode(base.accounts[0]), "manual");
+  const created = createManualTransaction(base, {
+    accountId: "cash-demo",
+    categoryId: "category-demo",
+    transactionDate: "2026-06-04",
+    description: "Market",
+    amountText: "-12.50",
+  });
+  assert.equal(created.transaction.source_kind, "manual");
+  const updated = updateManualTransaction(
+    created.data,
+    created.transaction.id,
+    {
+      accountId: "cash-demo",
+      categoryId: "category-demo",
+      transactionDate: "2026-06-05",
+      description: "Market corrected",
+      amountText: "-10",
+    },
+  );
+  assert.equal(updated.transaction.description, "Market corrected");
+  const deleted = deleteManualTransaction(
+    updated.data,
+    created.transaction.id,
+  );
+  assert.equal(deleted.transactions.length, 0);
 });

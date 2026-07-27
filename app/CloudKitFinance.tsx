@@ -11,9 +11,13 @@ import {
 } from "./cloudkit";
 import { emptyFinanceData, type TransactionRow } from "./finance-data";
 import {
+  addManualTransaction,
+  editManualTransaction,
   exportTransactionsCsv,
   importFinanceBundle,
+  removeManualTransaction,
   reviewTransaction,
+  type ManualTransactionInput,
 } from "./ledger";
 import { FinanceApp } from "./FinanceApp";
 
@@ -146,6 +150,34 @@ export function CloudKitFinance() {
     }));
   }
 
+  async function createManualEntry(input: ManualTransactionInput) {
+    return updateLedger(async (current) => {
+      const changed = addManualTransaction(current.data, input);
+      return { data: changed.data, result: changed.transaction };
+    });
+  }
+
+  async function updateManualEntry(
+    transaction: TransactionRow,
+    input: ManualTransactionInput,
+  ) {
+    return updateLedger(async (current) => {
+      const changed = editManualTransaction(
+        current.data,
+        transaction.id,
+        input,
+      );
+      return { data: changed.data, result: changed.transaction };
+    });
+  }
+
+  async function deleteManualEntry(transaction: TransactionRow) {
+    return updateLedger(async (current) => ({
+      data: removeManualTransaction(current.data, transaction.id),
+      result: undefined,
+    }));
+  }
+
   function exportCsv() {
     const csv = exportTransactionsCsv(
       ledgerRef.current?.data ?? emptyFinanceData,
@@ -209,6 +241,9 @@ export function CloudKitFinance() {
         }}
         onImportBundle={importBundle}
         onReviewTransaction={categorizeTransaction}
+        onCreateManualTransaction={createManualEntry}
+        onUpdateManualTransaction={updateManualEntry}
+        onDeleteManualTransaction={deleteManualEntry}
         onExportTransactions={exportCsv}
         onExportLedger={exportLedger}
       />
