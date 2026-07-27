@@ -1004,6 +1004,12 @@ select:focus-visible {
   color: #315b43;
 }
 
+.export-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
 .import-status {
   margin: 12px 0 0 !important;
   color: #477259 !important;

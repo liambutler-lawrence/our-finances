@@ -150,14 +150,19 @@ export function CloudKitFinance() {
     const csv = exportTransactionsCsv(
       ledgerRef.current?.data ?? emptyFinanceData,
     );
-    const href = URL.createObjectURL(
-      new Blob([csv], { type: "text/csv;charset=utf-8" }),
+    downloadFile(
+      "our-finances-transactions.csv",
+      csv,
+      "text/csv;charset=utf-8",
     );
-    const link = document.createElement("a");
-    link.href = href;
-    link.download = "our-finances-transactions.csv";
-    link.click();
-    URL.revokeObjectURL(href);
+  }
+
+  function exportLedger() {
+    downloadFile(
+      "our-finances-ledger.json",
+      JSON.stringify(ledgerRef.current?.data ?? emptyFinanceData, null, 2),
+      "application/json;charset=utf-8",
+    );
   }
 
   if (identity === undefined) {
@@ -204,7 +209,8 @@ export function CloudKitFinance() {
         }}
         onImportBundle={importBundle}
         onReviewTransaction={categorizeTransaction}
-        onExport={exportCsv}
+        onExportTransactions={exportCsv}
+        onExportLedger={exportLedger}
       />
     </>
   );
@@ -246,4 +252,15 @@ function AuthCard({
 
 function message(value: unknown, fallback: string) {
   return value instanceof Error && value.message ? value.message : fallback;
+}
+
+function downloadFile(name: string, contents: string, type: string) {
+  const href = URL.createObjectURL(new Blob([contents], { type }));
+  const link = document.createElement("a");
+  link.href = href;
+  link.download = name;
+  document.body.append(link);
+  link.click();
+  link.remove();
+  window.setTimeout(() => URL.revokeObjectURL(href), 1_000);
 }

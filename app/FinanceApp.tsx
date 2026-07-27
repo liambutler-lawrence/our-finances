@@ -60,7 +60,8 @@ export function FinanceApp({
   user,
   onImportBundle,
   onReviewTransaction,
-  onExport,
+  onExportTransactions,
+  onExportLedger,
 }: {
   data: FinanceData;
   user: { displayName: string; role: string };
@@ -69,7 +70,8 @@ export function FinanceApp({
     transaction: TransactionRow,
     categoryId: string,
   ) => Promise<void>;
-  onExport: () => void;
+  onExportTransactions: () => void;
+  onExportLedger: () => void;
 }) {
   const data = useMemo(() => deriveFinanceView(storedData), [storedData]);
   const [tab, setTab] = useState<Tab>("overview");
@@ -573,16 +575,26 @@ export function FinanceApp({
                 <p className="eyebrow">Portable by design</p>
                 <h2>Take every transaction with you</h2>
                 <p>
-                  Export a flat CSV at any time. Exact source amounts,
-                  currencies, categories, and review status are included.
+                  Export the complete private ledger as JSON, or a flat
+                  transaction CSV with exact source amounts, categories, and
+                  review status.
                 </p>
-                <button
-                  className="secondary-button"
-                  type="button"
-                  onClick={onExport}
-                >
-                  Export transactions.csv
-                </button>
+                <div className="export-actions">
+                  <button
+                    className="primary-button"
+                    type="button"
+                    onClick={onExportLedger}
+                  >
+                    Export full ledger.json
+                  </button>
+                  <button
+                    className="secondary-button"
+                    type="button"
+                    onClick={onExportTransactions}
+                  >
+                    Export transactions.csv
+                  </button>
+                </div>
               </article>
             </div>
 
