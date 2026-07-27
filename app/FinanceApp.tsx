@@ -8,6 +8,7 @@ import type {
   TransactionRow,
 } from "./finance-data";
 import { deriveFinanceView } from "./ledger";
+import { money, signedMoney } from "./money.mjs";
 
 type Tab = "overview" | "month" | "review" | "data";
 
@@ -24,19 +25,6 @@ function monthLabel(month: string) {
 function number(value: string | null | undefined) {
   const parsed = Number(value ?? 0);
   return Number.isFinite(parsed) ? parsed : 0;
-}
-
-function money(value: number, currency = "MXN") {
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency,
-    maximumFractionDigits: currency === "MXN" ? 0 : 2,
-  }).format(value);
-}
-
-function signedMoney(value: number, currency = "MXN") {
-  if (value === 0) return money(0, currency);
-  return `${value > 0 ? "+" : "−"}${money(Math.abs(value), currency)}`;
 }
 
 function summaryValue(rows: AggregateRow[], label: string, currency: "MXN" | "USD") {

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
+import { money, signedMoney } from "../app/money.mjs";
 
 const root = new URL("../", import.meta.url);
 
@@ -75,4 +76,11 @@ test("exports both the complete ledger and lossless transaction CSV", async () =
   assert.match(shell, /our-finances-transactions\.csv/);
   assert.match(ledger, /raw_text/);
   assert.match(ledger, /source_line_start/);
+});
+
+test("formats asset-denominated ledger cells without crashing", () => {
+  assert.equal(money(1.23456789, "AVAX"), "1.23456789 AVAX");
+  assert.equal(signedMoney(-1.25, "AVAX"), "−1.25 AVAX");
+  assert.equal(money(0.00000001, "BTC"), "0.00000001 BTC");
+  assert.match(money(12.5, "USD"), /\$12\.50/);
 });
