@@ -94,7 +94,7 @@ export async function initializeCloudKit(): Promise<CloudKitContainer> {
     process.env.NEXT_PUBLIC_CLOUDKIT_CONTAINER_IDENTIFIER;
   const apiToken = process.env.NEXT_PUBLIC_CLOUDKIT_API_TOKEN;
   const environmentName =
-    process.env.NEXT_PUBLIC_CLOUDKIT_ENVIRONMENT ?? "development";
+    process.env.NEXT_PUBLIC_CLOUDKIT_ENVIRONMENT ?? "production";
   if (!containerIdentifier || !apiToken) {
     throw new Error("CloudKit configuration is unavailable");
   }

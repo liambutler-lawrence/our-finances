@@ -34,6 +34,7 @@ test("uses per-user private CloudKit without a shared data binding", async () =>
   assert.equal(bindings.r2, null);
   assert.match(cloudkit, /privateCloudDatabase/);
   assert.match(cloudkit, /isEncrypted:\s*true/);
+  assert.match(cloudkit, /NEXT_PUBLIC_CLOUDKIT_ENVIRONMENT \?\? "production"/);
   assert.doesNotMatch(cloudkit, /publicCloudDatabase/);
   assert.doesNotMatch(cloudkit, /serverToServer/);
   assert.match(ledger, /our-finances-legacy-v1/);
