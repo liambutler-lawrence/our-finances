@@ -235,9 +235,17 @@ select:focus-visible {
   white-space: nowrap;
 }
 
-.user-row a {
-  color: #899b91;
-  text-decoration: none;
+.apple-signout-slot {
+  display: grid;
+  min-width: 20px;
+  justify-items: end;
+  overflow: hidden;
+}
+
+.apple-signout-slot > * {
+  max-width: 20px !important;
+  min-width: 20px !important;
+  overflow: hidden;
 }
 
 .workspace {
@@ -1148,6 +1156,50 @@ select:focus-visible {
 
 .signin-button {
   width: 100%;
+}
+
+.apple-auth-slot {
+  display: grid;
+  width: 100%;
+  min-height: 42px;
+  align-items: center;
+}
+
+.apple-auth-slot > * {
+  width: 100% !important;
+  min-height: 42px;
+}
+
+.apple-auth-slot.loading {
+  border-radius: 8px;
+  background:
+    linear-gradient(90deg, transparent, rgb(255 255 255 / 48%), transparent),
+    #e8ece8;
+  background-size: 180% 100%;
+  animation: cloudkit-loading 1.2s infinite linear;
+}
+
+.apple-signout-hidden,
+.apple-signin-hidden {
+  display: none;
+}
+
+.cloudkit-error {
+  width: 100%;
+  margin: 12px 0 0;
+  padding: 10px 12px;
+  border: 1px solid #eccfc8;
+  border-radius: 8px;
+  background: #fff4f1;
+  color: #8d392b;
+  font-size: 10px;
+  line-height: 1.45;
+}
+
+@keyframes cloudkit-loading {
+  to {
+    background-position: -180% 0;
+  }
 }
 
 .privacy-note {

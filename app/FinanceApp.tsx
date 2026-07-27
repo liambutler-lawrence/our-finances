@@ -7,6 +7,7 @@ import type {
   FinanceData,
   TransactionRow,
 } from "./finance-data";
+import { deriveFinanceView } from "./ledger";
 
 type Tab = "overview" | "month" | "review" | "data";
 
@@ -55,27 +56,37 @@ function initials(value: string) {
 }
 
 export function FinanceApp({
-  initialData,
+  data: storedData,
   user,
-  signOutPath,
+  onImportBundle,
+  onReviewTransaction,
+  onExport,
 }: {
-  initialData: FinanceData;
+  data: FinanceData;
   user: { displayName: string; role: string };
-  signOutPath: string;
+  onImportBundle: (payload: unknown) => Promise<number>;
+  onReviewTransaction: (
+    transaction: TransactionRow,
+    categoryId: string,
+  ) => Promise<void>;
+  onExport: () => void;
 }) {
-  const [data, setData] = useState(initialData);
+  const data = useMemo(() => deriveFinanceView(storedData), [storedData]);
   const [tab, setTab] = useState<Tab>("overview");
   const [month, setMonth] = useState(
-    initialData.months.at(-1) ?? new Date().toISOString().slice(0, 7),
+    data.months.at(-1) ?? new Date().toISOString().slice(0, 7),
   );
   const [currency, setCurrency] = useState<"MXN" | "USD">("MXN");
   const [importStatus, setImportStatus] = useState<string>("");
   const [isImporting, setIsImporting] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
+  const activeMonth = data.months.includes(month)
+    ? month
+    : (data.months.at(-1) ?? month);
 
   const monthRows = useMemo(
-    () => data.aggregates.filter((row) => row.month === month),
-    [data.aggregates, month],
+    () => data.aggregates.filter((row) => row.month === activeMonth),
+    [activeMonth, data.aggregates],
   );
   const income = summaryValue(monthRows, "income", currency);
   const spending = summaryValue(monthRows, "spending", currency);
@@ -113,34 +124,14 @@ export function FinanceApp({
   });
   const trendMax = Math.max(1, ...trend.map((item) => Math.abs(item.net)));
 
-  async function refreshData() {
-    const response = await fetch("/api/finance", { cache: "no-store" });
-    if (!response.ok) throw new Error("Could not refresh the ledger");
-    const nextData = (await response.json()) as FinanceData;
-    setData(nextData);
-    if (!nextData.months.includes(month) && nextData.months.length) {
-      setMonth(nextData.months.at(-1)!);
-    }
-  }
-
   async function importBundle(file: File) {
     setIsImporting(true);
     setImportStatus("Checking the bundle…");
     try {
       const payload = JSON.parse(await file.text());
-      const response = await fetch("/api/import", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-      const result = (await response.json()) as {
-        error?: string;
-        imported?: number;
-      };
-      if (!response.ok) throw new Error(result.error ?? "Import failed");
-      await refreshData();
+      const imported = await onImportBundle(payload);
       setImportStatus(
-        `${result.imported ?? 0} private records imported. Nothing was added to Git.`,
+        `${imported} private records imported to your iCloud. Nothing was added to Git.`,
       );
     } catch (error) {
       setImportStatus(error instanceof Error ? error.message : "Import failed");
@@ -154,12 +145,7 @@ export function FinanceApp({
     transaction: TransactionRow,
     categoryId: string,
   ) {
-    const response = await fetch(`/api/transactions/${transaction.id}`, {
-      method: "PATCH",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ categoryId, reviewStatus: "reviewed" }),
-    });
-    if (response.ok) await refreshData();
+    await onReviewTransaction(transaction, categoryId);
   }
 
   const isEmpty = data.aggregates.length === 0 && data.statements.length === 0;
@@ -208,7 +194,7 @@ export function FinanceApp({
         <div className="sidebar-foot">
           <div className="privacy-chip">
             <span aria-hidden="true">●</span>
-            Protected data store
+            Your private iCloud
           </div>
           <div className="user-row">
             <span className="avatar">{initials(user.displayName)}</span>
@@ -216,9 +202,7 @@ export function FinanceApp({
               <strong>{user.displayName}</strong>
               <span>{user.role}</span>
             </div>
-            <a href={signOutPath} aria-label="Sign out" title="Sign out">
-              ↗
-            </a>
+            <div id="apple-sign-out-button" className="apple-signout-slot" />
           </div>
         </div>
       </aside>
@@ -232,7 +216,10 @@ export function FinanceApp({
           <div className="topbar-actions">
             <label className="month-control">
               <span className="sr-only">Month</span>
-              <select value={month} onChange={(event) => setMonth(event.target.value)}>
+              <select
+                value={activeMonth}
+                onChange={(event) => setMonth(event.target.value)}
+              >
                 {data.months.length ? (
                   [...data.months].reverse().map((value) => (
                     <option key={value} value={value}>
@@ -240,7 +227,7 @@ export function FinanceApp({
                     </option>
                   ))
                 ) : (
-                  <option value={month}>{monthLabel(month)}</option>
+                  <option value={activeMonth}>{monthLabel(activeMonth)}</option>
                 )}
               </select>
             </label>
@@ -327,7 +314,7 @@ export function FinanceApp({
               <article className="panel">
                 <PanelHead
                   title="Where it went"
-                  meta={monthLabel(month)}
+                  meta={monthLabel(activeMonth)}
                 />
                 <div className="category-list">
                   {categoryRows.slice(0, 8).map((row, index) => {
@@ -359,12 +346,12 @@ export function FinanceApp({
             <article className="panel">
               <PanelHead
                 title="Account balances"
-                meta={`${activeAccounts.length} active in ${monthLabel(month)}`}
+                meta={`${activeAccounts.length} active in ${monthLabel(activeMonth)}`}
               />
               <AccountStrip
                 accounts={activeAccounts}
                 balances={data.balances.filter((row) =>
-                  row.as_of_date.startsWith(month),
+                  row.as_of_date.startsWith(activeMonth),
                 )}
               />
             </article>
@@ -380,7 +367,7 @@ export function FinanceApp({
             </div>
             <article className="panel ledger-panel">
               <PanelHead
-                title={monthLabel(month)}
+                title={monthLabel(activeMonth)}
                 meta={`${activeAccounts.length} accounts · ${categoryRows.length} categories`}
               />
               <div className="ledger-scroll">
@@ -589,9 +576,13 @@ export function FinanceApp({
                   Export a flat CSV at any time. Exact source amounts,
                   currencies, categories, and review status are included.
                 </p>
-                <a className="secondary-button" href="/api/export">
+                <button
+                  className="secondary-button"
+                  type="button"
+                  onClick={onExport}
+                >
                   Export transactions.csv
-                </a>
+                </button>
               </article>
             </div>
 

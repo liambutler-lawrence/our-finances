@@ -22,20 +22,35 @@ test("keeps private financial artifacts out of Git", async () => {
   }
 });
 
-test("protects data routes and exposes the canonical import skill", async () => {
-  const [financeRoute, importRoute, exportRoute, skill] = await Promise.all([
-    source("app/api/finance/route.ts"),
-    source("app/api/import/route.ts"),
-    source("app/api/export/route.ts"),
+test("uses per-user private CloudKit without a shared data binding", async () => {
+  const [hosting, cloudkit, ledger, skill] = await Promise.all([
+    source(".openai/hosting.json"),
+    source("app/cloudkit.ts"),
+    source("app/ledger.ts"),
     source(".agents/skills/import-financial-statement/SKILL.md"),
   ]);
-  for (const route of [financeRoute, importRoute, exportRoute]) {
-    assert.match(route, /requireApiUser/);
-    assert.match(route, /Unauthorized/);
-  }
-  assert.match(importRoute, /our-finances-legacy-v1/);
-  assert.match(importRoute, /schema_version/);
+  const bindings = JSON.parse(hosting);
+  assert.equal(bindings.d1, null);
+  assert.equal(bindings.r2, null);
+  assert.match(cloudkit, /privateCloudDatabase/);
+  assert.match(cloudkit, /isEncrypted:\s*true/);
+  assert.doesNotMatch(cloudkit, /publicCloudDatabase/);
+  assert.doesNotMatch(cloudkit, /serverToServer/);
+  assert.match(ledger, /our-finances-legacy-v1/);
+  assert.match(ledger, /schema_version/);
+  assert.match(ledger, /raw_text/);
+  assert.match(ledger, /source_line_start/);
   assert.match(skill, /lossless/i);
   assert.match(skill, /reconcil/i);
   assert.match(skill, /unparsed_money_line/);
+});
+
+test("keeps CloudKit deployment values out of tracked configuration", async () => {
+  const [gitignore, example] = await Promise.all([
+    source(".gitignore"),
+    source(".env.example"),
+  ]);
+  assert.match(gitignore, /\.env\*/);
+  assert.match(example, /replace-with-domain-restricted-browser-token/);
+  assert.doesNotMatch(example, /iCloud\.com\.liambutlerlawrence/);
 });
