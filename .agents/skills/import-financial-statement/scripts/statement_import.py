@@ -4,8 +4,10 @@
 from __future__ import annotations
 
 import argparse
+import calendar
 import csv
 import hashlib
+import io
 import json
 import re
 import sys
@@ -16,7 +18,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 SCHEMA_VERSION = "1.0.0"
-PARSER_VERSION = "1.0.0"
+PARSER_VERSION = "1.0.1"
 MONEY_RE = re.compile(
     r"(?<![\w])(?:"
     r"[+-]?\s*[$€£]\s*\(?\d[\d.,]*\)?"
@@ -185,17 +187,38 @@ def iso(d: date | None) -> str | None:
 def parse_us_date(text: str) -> date | None:
     match = US_DATE_RE.search(text)
     if match:
-        return date(int(match.group(3)), int(match.group(1)), int(match.group(2)))
+        try:
+            return date(
+                int(match.group(3)),
+                int(match.group(1)),
+                int(match.group(2)),
+            )
+        except ValueError:
+            return None
     match = re.search(r"\b([A-Za-z]{3})\s+(\d{1,2})(?:,\s*|\s+)(20\d{2})\b", text)
     if match and match.group(1).lower() in MONTHS_EN:
-        return date(int(match.group(3)), MONTHS_EN[match.group(1).lower()], int(match.group(2)))
+        try:
+            return date(
+                int(match.group(3)),
+                MONTHS_EN[match.group(1).lower()],
+                int(match.group(2)),
+            )
+        except ValueError:
+            return None
     return None
 
 
 def parse_short_month_date(text: str, year: int) -> date | None:
     match = re.search(r"\b([A-Za-z]{3})\s+(\d{1,2})\b", text)
     if match and match.group(1).lower() in MONTHS_EN:
-        return date(year, MONTHS_EN[match.group(1).lower()], int(match.group(2)))
+        try:
+            return date(
+                year,
+                MONTHS_EN[match.group(1).lower()],
+                int(match.group(2)),
+            )
+        except ValueError:
+            return None
     return None
 
 
@@ -210,7 +233,10 @@ def parse_spanish_date(text: str) -> date | None:
     if match:
         month = MONTHS_ES.get(match.group(2).lower())
         if month:
-            return date(int(match.group(3)), month, int(match.group(1)))
+            try:
+                return date(int(match.group(3)), month, int(match.group(1)))
+            except ValueError:
+                return None
     return None
 
 
@@ -686,10 +712,15 @@ def parse_cash_app(
         month = MONTHS_EN[period_match.group(1)[:3].lower()]
         year = int(period_match.group(2))
         period_start = iso(date(year, month, 1))
-        last_day = max(
+        dated_lines = [
             parse_short_month_date(match.group(0), year)
             for match in re.finditer(r"\b[A-Za-z]{3}\s+\d{1,2}\b", text)
             if parse_short_month_date(match.group(0), year)
+        ]
+        last_day = max(dated_lines) if dated_lines else date(
+            year,
+            month,
+            calendar.monthrange(year, month)[1],
         )
         period_end = iso(last_day)
     else:
@@ -1119,11 +1150,18 @@ def build_audit(
 def parse_csv_source(
     path: Path, statement_id: str
 ) -> tuple[list[Section], list[dict[str, Any]], dict[str, Any]]:
-    with path.open("r", encoding="utf-8-sig", newline="") as stream:
-        sample = stream.read(8192)
-        stream.seek(0)
-        dialect = csv.Sniffer().sniff(sample, delimiters=",;\t")
-        rows = list(csv.DictReader(stream, dialect=dialect))
+    source_text = path.read_text(encoding="utf-8-sig")
+    source_lines = source_text.splitlines()
+    header_index = 0
+    for index, line in enumerate(source_lines):
+        normalized = re.sub(r"\W+", "_", line.lower())
+        if "date" in normalized and "amount" in normalized:
+            header_index = index
+            break
+    table_text = "\n".join(source_lines[header_index:])
+    sample = table_text[:8192]
+    dialect = csv.Sniffer().sniff(sample, delimiters=",;\t")
+    rows = list(csv.DictReader(io.StringIO(table_text), dialect=dialect))
     section = Section(
         short_id("acct", statement_id, "csv"),
         path.stem,
@@ -1140,11 +1178,39 @@ def parse_csv_source(
             (normalized[key] for key in normalized if "date" in key and normalized[key]),
             "",
         )
-        tx_date = parse_us_date(date_value)
+        iso_match = ISO_DATE_RE.search(date_value)
+        tx_date = (
+            date(
+                int(iso_match.group(1)),
+                int(iso_match.group(2)),
+                int(iso_match.group(3)),
+            )
+            if iso_match
+            else parse_us_date(date_value)
+        )
         amount_value = next(
-            (normalized[key] for key in normalized if "amount" in key and normalized[key]),
+            (
+                normalized[key]
+                for key in normalized
+                if key in {"amount", "amount_total", "net_amount"}
+                and normalized[key]
+            ),
             "",
         )
+        if not amount_value:
+            amount_value = next(
+                (
+                    normalized[key]
+                    for key in normalized
+                    if "amount" in key
+                    and not any(
+                        excluded in key
+                        for excluded in ("tip", "tax", "fee", "balance")
+                    )
+                    and normalized[key]
+                ),
+                "",
+            )
         amount = parse_decimal(amount_value)
         if amount is None:
             continue

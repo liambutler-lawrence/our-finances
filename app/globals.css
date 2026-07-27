@@ -847,6 +847,11 @@ select:focus-visible {
   line-height: 1.45;
 }
 
+.cell-component-list .source-confidence {
+  color: #8a5a14;
+  font-weight: 650;
+}
+
 .cell-component-list li > strong {
   font-size: 10px;
   font-variant-numeric: tabular-nums;

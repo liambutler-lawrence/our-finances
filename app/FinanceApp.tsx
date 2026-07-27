@@ -885,6 +885,11 @@ function LedgerCellInspector({
                         .filter(Boolean)
                         .join(" · ") || "Legacy workbook component"}
                     </span>
+                    {item.matchConfidence === "medium" ? (
+                      <small className="source-confidence">
+                        Statement match needs verification
+                      </small>
+                    ) : null}
                   </div>
                   <strong
                     className={
@@ -975,6 +980,12 @@ function StatementSourceDialog({
             <dt>Statement</dt>
             <dd>{item.statementName ?? item.statementId ?? "Imported statement"}</dd>
           </div>
+          {item.statementPath ? (
+            <div>
+              <dt>iCloud Drive source</dt>
+              <dd>LiamarFinances/Statements/{item.statementPath}</dd>
+            </div>
+          ) : null}
           <div>
             <dt>Locator</dt>
             <dd>
@@ -990,6 +1001,18 @@ function StatementSourceDialog({
             <dt>Exact amount</dt>
             <dd>{signedMoney(number(item.amountText), item.currency)}</dd>
           </div>
+          {item.matchConfidence ? (
+            <div>
+              <dt>Source match</dt>
+              <dd>
+                {item.matchConfidence === "medium"
+                  ? "Needs verification"
+                  : item.matchConfidence === "canonical"
+                    ? "Canonical statement row"
+                    : "High-confidence amount match"}
+              </dd>
+            </div>
+          ) : null}
         </dl>
         {item.rawText ? (
           <pre>{item.rawText}</pre>

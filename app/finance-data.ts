@@ -24,6 +24,18 @@ export type AggregateComponentRow = {
   currency: string;
   description: string | null;
   source_ref: string | null;
+  statement_id?: string | null;
+  statement_name?: string | null;
+  statement_path?: string | null;
+  source_file_sha256?: string | null;
+  source_page?: number | null;
+  source_line_start?: number | null;
+  source_line_end?: number | null;
+  raw_text?: string | null;
+  transaction_date?: string | null;
+  source_amount_text?: string | null;
+  match_confidence?: string | null;
+  match_method?: string | null;
 };
 
 export type AggregateRow = {
@@ -66,6 +78,7 @@ export type StatementRow = {
   id: string;
   source_sha256?: string | null;
   source_basename: string;
+  source_relative_path?: string | null;
   institution: string | null;
   account_id?: string | null;
   period_start: string | null;

@@ -15,6 +15,40 @@
  * }} cell
  */
 export function getCellBreakdown(data, cell) {
+  const components = Array.isArray(cell.aggregate?.components)
+    ? cell.aggregate.components
+    : [];
+  const hasLinkedComponents = components.some(
+    (component) =>
+      component.statement_id ||
+      component.source_page ||
+      component.raw_text,
+  );
+  if (hasLinkedComponents) {
+    return components.map((component, index) => ({
+      id: component.id,
+      kind: component.statement_id
+        ? "statement_component"
+        : "workbook_component",
+      description: component.description ?? `Workbook amount ${index + 1}`,
+      amountText: component.amount_text,
+      currency:
+        component.currency ?? cell.aggregate?.currency ?? "MXN",
+      date: component.transaction_date ?? null,
+      statementId: component.statement_id ?? null,
+      statementName: component.statement_name ?? null,
+      statementPath: component.statement_path ?? null,
+      sourcePage: component.source_page ?? null,
+      sourceLineStart: component.source_line_start ?? null,
+      sourceLineEnd: component.source_line_end ?? null,
+      rawText: component.raw_text ?? null,
+      sourceAmountText: component.source_amount_text ?? null,
+      matchConfidence: component.match_confidence ?? null,
+      matchMethod: component.match_method ?? null,
+      sourceRef: component.source_ref ?? cell.aggregate?.source_ref ?? null,
+    }));
+  }
+
   const statements = new Map(
     data.statements.map((statement) => [statement.id, statement]),
   );
@@ -45,19 +79,20 @@ export function getCellBreakdown(data, cell) {
         date: transaction.transaction_date ?? transaction.posted_date ?? null,
         statementId: transaction.statement_id,
         statementName: statement?.source_basename ?? null,
+        statementPath: statement?.source_relative_path ?? null,
         sourcePage: transaction.source_page ?? null,
         sourceLineStart: transaction.source_line_start ?? null,
         sourceLineEnd: transaction.source_line_end ?? null,
         rawText: transaction.raw_text ?? null,
+        sourceAmountText: transaction.amount_text,
+        matchConfidence: "canonical",
+        matchMethod: "canonical_statement_transaction",
         sourceRef: null,
       };
     });
 
   if (transactions.length) return transactions;
 
-  const components = Array.isArray(cell.aggregate?.components)
-    ? cell.aggregate.components
-    : [];
   return components.map((component, index) => ({
     id: component.id,
     kind: "workbook_component",
@@ -68,10 +103,14 @@ export function getCellBreakdown(data, cell) {
     date: null,
     statementId: null,
     statementName: null,
+    statementPath: null,
     sourcePage: null,
     sourceLineStart: null,
     sourceLineEnd: null,
     rawText: null,
+    sourceAmountText: null,
+    matchConfidence: null,
+    matchMethod: null,
     sourceRef: component.source_ref ?? cell.aggregate?.source_ref ?? null,
   }));
 }

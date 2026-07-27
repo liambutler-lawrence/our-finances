@@ -170,3 +170,48 @@ test("uses protected workbook components for legacy ledger cells", () => {
   );
   assert.ok(items.every((item) => item.kind === "workbook_component"));
 });
+
+test("keeps direct statement evidence attached to historical components", () => {
+  const items = getCellBreakdown(
+    { statements: [], transactions: [] },
+    {
+      aggregate: {
+        currency: "USD",
+        components: [
+          {
+            id: "mapped-one",
+            amount_text: "-42.5",
+            currency: "USD",
+            description: "Example source description",
+            statement_id: "statement-example",
+            statement_name: "example-statement.pdf",
+            statement_path: "Owner/example-statement.pdf",
+            source_page: 3,
+            source_line_start: 21,
+            source_line_end: 21,
+            raw_text: "Example source description 42.50",
+            match_confidence: "high",
+          },
+          {
+            id: "unmapped-one",
+            amount_text: "-7.5",
+            currency: "USD",
+            description: "Workbook amount",
+            source_ref: "Private workbook source",
+          },
+        ],
+      },
+      month: "2025-06",
+      accountId: "account-demo",
+      categoryId: "category-demo",
+    },
+  );
+
+  assert.equal(items.length, 2);
+  assert.equal(items[0].kind, "statement_component");
+  assert.equal(items[0].statementName, "example-statement.pdf");
+  assert.equal(items[0].statementPath, "Owner/example-statement.pdf");
+  assert.equal(items[0].sourcePage, 3);
+  assert.equal(items[0].matchConfidence, "high");
+  assert.equal(items[1].kind, "workbook_component");
+});

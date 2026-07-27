@@ -89,6 +89,18 @@ function aggregateComponents(
     currency: required(item.currency, `${label}[${index}].currency`),
     description: optional(item.description),
     source_ref: optional(item.source_ref),
+    statement_id: optional(item.statement_id),
+    statement_name: optional(item.statement_name),
+    statement_path: optional(item.statement_path),
+    source_file_sha256: optional(item.source_file_sha256),
+    source_page: integer(item.source_page) || null,
+    source_line_start: integer(item.source_line_start) || null,
+    source_line_end: integer(item.source_line_end) || null,
+    raw_text: optional(item.raw_text),
+    transaction_date: optional(item.transaction_date),
+    source_amount_text: optional(item.source_amount_text),
+    match_confidence: optional(item.match_confidence),
+    match_method: optional(item.match_method),
   }));
 }
 
@@ -245,6 +257,41 @@ async function importLegacyBundle(
         source_ref: optional(item.source_ref),
       }) as IssueRow,
   );
+  const statements = (
+    Array.isArray(payload.statements)
+      ? list(payload.statements, "statements")
+      : []
+  ).map(
+    (item) =>
+      ({
+        ...item,
+        id: required(item.id, "statement.id"),
+        source_sha256: optional(item.source_sha256),
+        source_basename: required(
+          item.source_basename,
+          "statement.source_basename",
+        ),
+        source_relative_path: optional(item.source_relative_path),
+        institution: optional(item.institution),
+        account_id: optional(item.account_id),
+        period_start: optional(item.period_start),
+        period_end: optional(item.period_end),
+        currency: optional(item.currency),
+        opening_balance: optional(item.opening_balance),
+        closing_balance: optional(item.closing_balance),
+        reconciliation_status: required(
+          item.reconciliation_status,
+          "statement.reconciliation_status",
+        ),
+        validation_state: required(
+          item.validation_state,
+          "statement.validation_state",
+        ),
+        transaction_count: integer(item.transaction_count),
+        unparsed_money_line_count: integer(item.unparsed_money_line_count),
+        imported_at: required(item.imported_at, "statement.imported_at"),
+      }) as StatementRow,
+  );
   const data = withDerivedMonths({
     ...current,
     accounts: mergeById(current.accounts, accounts),
@@ -252,6 +299,7 @@ async function importLegacyBundle(
     aggregates: mergeById(current.aggregates, aggregates),
     balances: mergeById(current.balances, balances),
     prices: mergeById(current.prices, prices),
+    statements: mergeById(current.statements, statements),
     issues: mergeById(current.issues, issues),
   });
   return {
@@ -262,6 +310,7 @@ async function importLegacyBundle(
       aggregates.length +
       balances.length +
       prices.length +
+      statements.length +
       issues.length,
   };
 }
