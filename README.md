@@ -26,7 +26,8 @@ empty ledger, not the site owner's data.
   eligible iCloud data.
 - There is no shared application database, server-side financial-data store,
   owner allowlist, or master account.
-- Users can export every canonical transaction as CSV at any time.
+- Users can export the complete private ledger as JSON and every canonical
+  transaction as CSV at any time.
 - Original PDFs remain in the user's private document storage.
 - Local imports, statement files, spreadsheets, and generated bundles are
   excluded by `.gitignore`.
@@ -117,6 +118,11 @@ Historical workbook months remain as verified legacy aggregates. Canonical
 statement transactions drive a month when no legacy aggregate exists for that
 month, preventing an imported statement from silently double-counting a
 historical spreadsheet month.
+
+The legacy workbook migration does not invent line-item transactions that were
+not present in the workbook. Historical statement PDFs should be backfilled in
+reconciled batches through the statement-import skill; each imported statement
+then appears in the review queue with its exact source rows.
 
 ## Import contracts
 
