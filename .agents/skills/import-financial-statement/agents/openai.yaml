@@ -1,0 +1,4 @@
+interface:
+  display_name: "Import Financial Statement"
+  short_description: "Extract and reconcile statement transactions"
+  default_prompt: "Use $import-financial-statement to convert this statement into a lossless, reconciled import bundle."
