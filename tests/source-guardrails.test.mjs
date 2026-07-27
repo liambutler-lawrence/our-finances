@@ -55,3 +55,12 @@ test("keeps CloudKit deployment values out of tracked configuration", async () =
   assert.match(example, /replace-with-domain-restricted-browser-token/);
   assert.doesNotMatch(example, /iCloud\.com\.liambutlerlawrence/);
 });
+
+test("keeps the private import input mounted for an empty ledger", async () => {
+  const app = await source("app/FinanceApp.tsx");
+  const input = app.indexOf('accept=".json,application/json"');
+  const emptyState = app.indexOf("{isEmpty ? (");
+  assert.ok(input > -1);
+  assert.ok(emptyState > -1);
+  assert.ok(input < emptyState);
+});

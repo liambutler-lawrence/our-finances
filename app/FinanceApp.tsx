@@ -208,6 +208,16 @@ export function FinanceApp({
       </aside>
 
       <section className="workspace">
+        <input
+          ref={fileInput}
+          hidden
+          type="file"
+          accept=".json,application/json"
+          onChange={(event) => {
+            const file = event.target.files?.[0];
+            if (file) void importBundle(file);
+          }}
+        />
         <header className="topbar">
           <div>
             <p className="eyebrow">Household budget</p>
@@ -549,16 +559,6 @@ export function FinanceApp({
                   upload the generated bundle here. Files and values stay out of
                   the public repository.
                 </p>
-                <input
-                  ref={fileInput}
-                  hidden
-                  type="file"
-                  accept=".json,application/json"
-                  onChange={(event) => {
-                    const file = event.target.files?.[0];
-                    if (file) void importBundle(file);
-                  }}
-                />
                 <button
                   className="primary-button"
                   type="button"
