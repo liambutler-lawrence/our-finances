@@ -7,10 +7,21 @@ import type {
   FinanceData,
   TransactionRow,
 } from "./finance-data";
+import { getCellBreakdown } from "./cell-breakdown.mjs";
 import { deriveFinanceView } from "./ledger";
 import { money, signedMoney } from "./money.mjs";
 
 type Tab = "overview" | "month" | "review" | "data";
+type CellBreakdownItem = ReturnType<typeof getCellBreakdown>[number];
+type LedgerCellInspection = {
+  key: string;
+  month: string;
+  categoryLabel: string;
+  accountLabel: string;
+  amount: number;
+  currency: string;
+  items: CellBreakdownItem[];
+};
 
 const monthFormatter = new Intl.DateTimeFormat("en", {
   month: "long",
@@ -69,6 +80,9 @@ export function FinanceApp({
   const [currency, setCurrency] = useState<"MXN" | "USD">("MXN");
   const [importStatus, setImportStatus] = useState<string>("");
   const [isImporting, setIsImporting] = useState(false);
+  const [inspectedCell, setInspectedCell] =
+    useState<LedgerCellInspection | null>(null);
+  const [sourceItem, setSourceItem] = useState<CellBreakdownItem | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
   const activeMonth = data.months.includes(month)
     ? month
@@ -218,7 +232,11 @@ export function FinanceApp({
               <span className="sr-only">Month</span>
               <select
                 value={activeMonth}
-                onChange={(event) => setMonth(event.target.value)}
+                onChange={(event) => {
+                  setMonth(event.target.value);
+                  setInspectedCell(null);
+                  setSourceItem(null);
+                }}
               >
                 {data.months.length ? (
                   [...data.months].reverse().map((value) => (
@@ -403,12 +421,50 @@ export function FinanceApp({
                                   item.account_id === account.id,
                               );
                               const amount = number(row?.amount_text);
+                              const cellKey = [
+                                activeMonth,
+                                category.id,
+                                account.id,
+                              ].join(":");
+                              const inspectCell = () => {
+                                if (!amount) return;
+                                setInspectedCell({
+                                  key: cellKey,
+                                  month: activeMonth,
+                                  categoryLabel: category.label,
+                                  accountLabel: account.label,
+                                  amount,
+                                  currency: account.currency,
+                                  items: getCellBreakdown(data, {
+                                    aggregate: row,
+                                    month: activeMonth,
+                                    accountId: account.id,
+                                    categoryId: category.id,
+                                  }),
+                                });
+                              };
                               return (
                                 <td
                                   key={account.id}
-                                  className={amount < 0 ? "negative-number" : ""}
+                                  className={`ledger-cell ${
+                                    amount < 0 ? "negative-number" : ""
+                                  }`}
                                 >
-                                  {amount ? signedMoney(amount, account.currency) : "·"}
+                                  {amount ? (
+                                    <button
+                                      type="button"
+                                      className="ledger-cell-trigger"
+                                      aria-expanded={inspectedCell?.key === cellKey}
+                                      aria-label={`Show the amounts contributing to ${category.label} in ${account.label}`}
+                                      onMouseEnter={inspectCell}
+                                      onFocus={inspectCell}
+                                      onClick={inspectCell}
+                                    >
+                                      {signedMoney(amount, account.currency)}
+                                    </button>
+                                  ) : (
+                                    "·"
+                                  )}
                                 </td>
                               );
                             })}
@@ -422,6 +478,13 @@ export function FinanceApp({
                 </table>
               </div>
             </article>
+            {inspectedCell?.month === activeMonth ? (
+              <LedgerCellInspector
+                inspection={inspectedCell}
+                onClose={() => setInspectedCell(null)}
+                onOpenSource={setSourceItem}
+              />
+            ) : null}
           </section>
         ) : null}
 
@@ -648,6 +711,12 @@ export function FinanceApp({
           </section>
         ) : null}
       </section>
+      {sourceItem ? (
+        <StatementSourceDialog
+          item={sourceItem}
+          onClose={() => setSourceItem(null)}
+        />
+      ) : null}
     </main>
   );
 }
@@ -759,6 +828,181 @@ function IssueBanner({ count }: { count: number }) {
         <strong>{count} source-data issue{count === 1 ? "" : "s"} need attention</strong>
         <p>They are preserved as audit findings instead of being silently copied.</p>
       </div>
+    </div>
+  );
+}
+
+function LedgerCellInspector({
+  inspection,
+  onClose,
+  onOpenSource,
+}: {
+  inspection: LedgerCellInspection;
+  onClose: () => void;
+  onOpenSource: (item: CellBreakdownItem) => void;
+}) {
+  const itemTotal = inspection.items.reduce(
+    (sum, item) => sum + number(item.amountText),
+    0,
+  );
+  const reconciles =
+    inspection.items.length > 0 &&
+    Math.abs(itemTotal - inspection.amount) < 0.00000001;
+
+  return (
+    <aside
+      className="cell-inspector"
+      data-testid="cell-breakdown-panel"
+      aria-label="Ledger cell breakdown"
+    >
+      <header>
+        <div>
+          <p className="eyebrow">{inspection.accountLabel}</p>
+          <h2>{inspection.categoryLabel}</h2>
+        </div>
+        <button
+          type="button"
+          className="inspector-close"
+          aria-label="Close cell breakdown"
+          onClick={onClose}
+        >
+          ×
+        </button>
+      </header>
+      {inspection.items.length ? (
+        <>
+          <ol className="cell-component-list">
+            {inspection.items.map((item) => {
+              const hasStatementSource = Boolean(
+                item.statementId || item.sourcePage || item.rawText,
+              );
+              return (
+                <li key={item.id}>
+                  <div>
+                    <strong>{item.description}</strong>
+                    <span>
+                      {[item.date, item.statementName]
+                        .filter(Boolean)
+                        .join(" · ") || "Legacy workbook component"}
+                    </span>
+                  </div>
+                  <strong
+                    className={
+                      number(item.amountText) < 0
+                        ? "negative-number"
+                        : "positive-number"
+                    }
+                  >
+                    {signedMoney(number(item.amountText), item.currency)}
+                  </strong>
+                  {hasStatementSource ? (
+                    <button
+                      type="button"
+                      className="source-link"
+                      onClick={() => onOpenSource(item)}
+                    >
+                      View statement source
+                      {item.sourcePage ? ` · p. ${item.sourcePage}` : ""}
+                    </button>
+                  ) : item.sourceRef ? (
+                    <small>{item.sourceRef}</small>
+                  ) : null}
+                </li>
+              );
+            })}
+          </ol>
+          <footer>
+            <span>
+              {inspection.items.length} amount
+              {inspection.items.length === 1 ? "" : "s"}
+            </span>
+            <strong>{signedMoney(inspection.amount, inspection.currency)}</strong>
+          </footer>
+          {!reconciles ? (
+            <p className="component-warning">
+              The stored breakdown does not equal this ledger cell. The ledger
+              total has not been altered.
+            </p>
+          ) : null}
+        </>
+      ) : (
+        <p className="inspector-empty">
+          No itemized source is stored for this legacy total yet.
+        </p>
+      )}
+    </aside>
+  );
+}
+
+function StatementSourceDialog({
+  item,
+  onClose,
+}: {
+  item: CellBreakdownItem;
+  onClose: () => void;
+}) {
+  const lineLabel =
+    item.sourceLineStart && item.sourceLineEnd
+      ? item.sourceLineStart === item.sourceLineEnd
+        ? `line ${item.sourceLineStart}`
+        : `lines ${item.sourceLineStart}–${item.sourceLineEnd}`
+      : null;
+
+  return (
+    <div className="source-dialog-backdrop">
+      <section
+        className="source-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="source-dialog-title"
+      >
+        <header>
+          <div>
+            <p className="eyebrow">Preserved statement evidence</p>
+            <h2 id="source-dialog-title">{item.description}</h2>
+          </div>
+          <button
+            type="button"
+            className="inspector-close"
+            aria-label="Close statement source"
+            onClick={onClose}
+          >
+            ×
+          </button>
+        </header>
+        <dl>
+          <div>
+            <dt>Statement</dt>
+            <dd>{item.statementName ?? item.statementId ?? "Imported statement"}</dd>
+          </div>
+          <div>
+            <dt>Locator</dt>
+            <dd>
+              {[
+                item.sourcePage ? `page ${item.sourcePage}` : null,
+                lineLabel,
+              ]
+                .filter(Boolean)
+                .join(" · ") || "Source locator unavailable"}
+            </dd>
+          </div>
+          <div>
+            <dt>Exact amount</dt>
+            <dd>{signedMoney(number(item.amountText), item.currency)}</dd>
+          </div>
+        </dl>
+        {item.rawText ? (
+          <pre>{item.rawText}</pre>
+        ) : (
+          <p className="inspector-empty">
+            The source page is identified, but its original text was not stored.
+          </p>
+        )}
+        <p className="source-dialog-note">
+          This is the preserved page-and-line locator from your private import.
+          The original PDF remains in your own file storage.
+        </p>
+      </section>
     </div>
   );
 }

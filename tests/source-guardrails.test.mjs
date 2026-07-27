@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
+import { getCellBreakdown } from "../app/cell-breakdown.mjs";
 import { money, signedMoney } from "../app/money.mjs";
 
 const root = new URL("../", import.meta.url);
@@ -83,4 +84,89 @@ test("formats asset-denominated ledger cells without crashing", () => {
   assert.equal(signedMoney(-1.25, "AVAX"), "−1.25 AVAX");
   assert.equal(money(0.00000001, "BTC"), "0.00000001 BTC");
   assert.match(money(12.5, "USD"), /\$12\.50/);
+});
+
+test("prefers statement transactions for ledger cell breakdowns", () => {
+  const items = getCellBreakdown(
+    {
+      statements: [
+        {
+          id: "statement-demo",
+          source_basename: "sample-statement.pdf",
+        },
+      ],
+      transactions: [
+        {
+          id: "transaction-one",
+          statement_id: "statement-demo",
+          account_id: "account-demo",
+          category_id: "category-demo",
+          transaction_date: "2026-06-04",
+          description: "Example merchant",
+          amount_text: "-12.34",
+          currency: "USD",
+          source_page: 2,
+          source_line_start: 10,
+          source_line_end: 11,
+          raw_text: "Example source line",
+        },
+      ],
+    },
+    {
+      aggregate: {
+        components: [
+          {
+            id: "legacy-one",
+            amount_text: "-12.34",
+            currency: "USD",
+          },
+        ],
+      },
+      month: "2026-06",
+      accountId: "account-demo",
+      categoryId: "category-demo",
+    },
+  );
+
+  assert.equal(items.length, 1);
+  assert.equal(items[0].kind, "transaction");
+  assert.equal(items[0].statementName, "sample-statement.pdf");
+  assert.equal(items[0].sourcePage, 2);
+  assert.equal(items[0].rawText, "Example source line");
+});
+
+test("uses protected workbook components for legacy ledger cells", () => {
+  const items = getCellBreakdown(
+    { statements: [], transactions: [] },
+    {
+      aggregate: {
+        currency: "MXN",
+        components: [
+          {
+            id: "legacy-one",
+            amount_text: "-100",
+            currency: "MXN",
+            description: "Workbook amount 1",
+            source_ref: "Budget workbook · June 2025 · B12",
+          },
+          {
+            id: "legacy-two",
+            amount_text: "-25",
+            currency: "MXN",
+            description: "Workbook amount 2",
+            source_ref: "Budget workbook · June 2025 · B12",
+          },
+        ],
+      },
+      month: "2025-06",
+      accountId: "account-demo",
+      categoryId: "category-demo",
+    },
+  );
+
+  assert.deepEqual(
+    items.map((item) => item.amountText),
+    ["-100", "-25"],
+  );
+  assert.ok(items.every((item) => item.kind === "workbook_component"));
 });

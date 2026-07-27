@@ -18,6 +18,14 @@ export type CategoryRow = {
   active?: boolean;
 };
 
+export type AggregateComponentRow = {
+  id: string;
+  amount_text: string;
+  currency: string;
+  description: string | null;
+  source_ref: string | null;
+};
+
 export type AggregateRow = {
   id: string;
   month: string;
@@ -30,6 +38,7 @@ export type AggregateRow = {
   amount_mxn_text: string | null;
   amount_usd_text: string | null;
   source_ref?: string | null;
+  components?: AggregateComponentRow[];
   verification_status: string;
 };
 

@@ -1,6 +1,7 @@
 import {
   emptyFinanceData,
   type AccountRow,
+  type AggregateComponentRow,
   type AggregateRow,
   type BalanceRow,
   type CategoryRow,
@@ -72,6 +73,23 @@ function integer(value: unknown, fallback = 0): number {
 function bool(value: unknown, fallback = true): boolean {
   if (value === undefined || value === null) return fallback;
   return value !== false && value !== 0;
+}
+
+function aggregateComponents(
+  value: unknown,
+  label: string,
+): AggregateComponentRow[] {
+  if (value === null || value === undefined) return [];
+  return list(value, label).map((item, index) => ({
+    id: required(item.id, `${label}[${index}].id`),
+    amount_text: required(
+      item.amount_text,
+      `${label}[${index}].amount_text`,
+    ),
+    currency: required(item.currency, `${label}[${index}].currency`),
+    description: optional(item.description),
+    source_ref: optional(item.source_ref),
+  }));
 }
 
 async function stableId(prefix: string, value: string) {
@@ -176,6 +194,10 @@ async function importLegacyBundle(
         currency: optional(item.currency),
         amount_mxn_text: optional(item.amount_mxn_text),
         amount_usd_text: optional(item.amount_usd_text),
+        components: aggregateComponents(
+          item.components,
+          `aggregate[${String(item.id ?? "unknown")}].components`,
+        ),
         verification_status: required(
           item.verification_status,
           "aggregate.verification_status",
