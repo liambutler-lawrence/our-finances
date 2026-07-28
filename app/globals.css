@@ -1173,6 +1173,8 @@ input:focus-visible {
 }
 
 .statement-card {
+  width: 100%;
+  appearance: none;
   display: grid;
   grid-template-columns: 1fr auto;
   gap: 7px 10px;
@@ -1180,7 +1182,34 @@ input:focus-visible {
   border: 1px solid var(--line);
   border-radius: 10px;
   background: var(--paper);
+  color: inherit;
+  font: inherit;
+  text-align: left;
   box-shadow: 0 3px 12px rgb(37 52 43 / 4%);
+  cursor: pointer;
+  transition:
+    border-color 140ms ease,
+    background 140ms ease,
+    box-shadow 140ms ease,
+    transform 140ms ease;
+}
+
+.statement-card:hover {
+  border-color: #b8c9bd;
+  transform: translateY(-1px);
+}
+
+.statement-card:focus-visible {
+  outline: 2px solid #7ba18a;
+  outline-offset: 2px;
+}
+
+.statement-card[aria-pressed="true"] {
+  border-color: #6f9a7f;
+  background: #f0f6f1;
+  box-shadow:
+    0 0 0 1px rgb(69 117 86 / 10%),
+    0 5px 16px rgb(37 52 43 / 8%);
 }
 
 .statement-card > div {
@@ -1211,8 +1240,36 @@ input:focus-visible {
 
 .statement-card small {
   grid-column: 1 / -1;
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
   padding-top: 7px;
   border-top: 1px solid var(--line-soft);
+}
+
+.statement-card small > span {
+  overflow: hidden;
+  color: #59665e;
+  font-weight: 620;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.statement-card-all .institution-mark {
+  font-size: 7px;
+  letter-spacing: 0.04em;
+}
+
+.statement-filter-count {
+  align-self: start;
+  padding: 4px 7px;
+  border-radius: 99px;
+  background: #e6eef1;
+  color: #426575 !important;
+  font-size: 8px !important;
+  font-weight: 750;
+  font-variant-numeric: tabular-nums;
 }
 
 .status-pill {

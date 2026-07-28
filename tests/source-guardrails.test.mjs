@@ -12,6 +12,7 @@ import {
   updateManualTransaction,
 } from "../app/manual-transactions.mjs";
 import { money, signedMoney } from "../app/money.mjs";
+import { statementReviewTransactions } from "../app/statement-review.mjs";
 
 const root = new URL("../", import.meta.url);
 
@@ -93,6 +94,46 @@ test("formats asset-denominated ledger cells without crashing", () => {
   assert.equal(signedMoney(-1.25, "AVAX"), "−1.25 AVAX");
   assert.equal(money(0.00000001, "BTC"), "0.00000001 BTC");
   assert.match(money(12.5, "USD"), /\$12\.50/);
+});
+
+test("filters the statement review queue without exposing manual transactions", () => {
+  const transactions = [
+    {
+      id: "statement-one-a",
+      statement_id: "statement-one",
+      source_kind: "statement",
+    },
+    {
+      id: "statement-two-a",
+      statement_id: "statement-two",
+      source_kind: "statement",
+    },
+    {
+      id: "source-gap",
+      statement_id: null,
+      source_kind: "source_gap",
+    },
+    {
+      id: "manual",
+      statement_id: null,
+      source_kind: "manual",
+    },
+  ];
+
+  assert.deepEqual(
+    statementReviewTransactions(transactions).map((item) => item.id),
+    ["statement-one-a", "statement-two-a", "source-gap"],
+  );
+  assert.deepEqual(
+    statementReviewTransactions(transactions, "statement-one").map(
+      (item) => item.id,
+    ),
+    ["statement-one-a"],
+  );
+  assert.deepEqual(
+    statementReviewTransactions(transactions, "missing-statement"),
+    [],
+  );
 });
 
 test("prefers statement transactions for ledger cell breakdowns", () => {

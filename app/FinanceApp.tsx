@@ -15,6 +15,7 @@ import {
 } from "./derive-ledger.mjs";
 import { deriveFinanceView, type ManualTransactionInput } from "./ledger";
 import { money, signedMoney } from "./money.mjs";
+import { statementReviewTransactions } from "./statement-review.mjs";
 
 type Tab = "overview" | "month" | "review" | "manual" | "data";
 type CellBreakdownItem = ReturnType<typeof getCellBreakdown>[number];
@@ -94,6 +95,9 @@ export function FinanceApp({
     data.months.at(-1) ?? new Date().toISOString().slice(0, 7),
   );
   const [currency, setCurrency] = useState<"MXN" | "USD">("MXN");
+  const [selectedStatementId, setSelectedStatementId] = useState<string | null>(
+    null,
+  );
   const [importStatus, setImportStatus] = useState<string>("");
   const [isImporting, setIsImporting] = useState(false);
   const [inspectedCell, setInspectedCell] =
@@ -142,9 +146,32 @@ export function FinanceApp({
   const sourceGapCount = data.transactions.filter(
     (transaction) => transaction.source_kind === "source_gap",
   ).length;
-  const statementTransactions = data.transactions.filter(
-    (transaction) => transaction.source_kind !== "manual",
+  const statementTransactions = useMemo(
+    () => statementReviewTransactions(data.transactions),
+    [data.transactions],
   );
+  const selectedStatement =
+    data.statements.find((statement) => statement.id === selectedStatementId) ??
+    null;
+  const visibleStatementTransactions = useMemo(
+    () =>
+      statementReviewTransactions(
+        data.transactions,
+        selectedStatement?.id ?? null,
+      ),
+    [data.transactions, selectedStatement?.id],
+  );
+  const statementTransactionCounts = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const transaction of statementTransactions) {
+      if (!transaction.statement_id) continue;
+      counts.set(
+        transaction.statement_id,
+        (counts.get(transaction.statement_id) ?? 0) + 1,
+      );
+    }
+    return counts;
+  }, [statementTransactions]);
   const manualAccounts = data.accounts.filter(
     (account) => accountEntryMode(account) === "manual",
   );
@@ -548,9 +575,38 @@ export function FinanceApp({
               </span>
             </div>
             <div className="review-layout">
-              <div className="statement-list">
+              <div
+                className="statement-list"
+                role="group"
+                aria-label="Filter by statement"
+              >
+                <button
+                  type="button"
+                  className="statement-card statement-card-all"
+                  aria-pressed={!selectedStatement}
+                  onClick={() => setSelectedStatementId(null)}
+                >
+                  <div>
+                    <span className="institution-mark">ALL</span>
+                    <div>
+                      <strong>All statements</strong>
+                      <span>{data.statements.length} imported statements</span>
+                    </div>
+                  </div>
+                  <span className="statement-filter-count">
+                    {statementTransactions.length}
+                  </span>
+                  <small>Includes transactions awaiting statement matching</small>
+                </button>
                 {data.statements.map((statement) => (
-                  <article className="statement-card" key={statement.id}>
+                  <button
+                    type="button"
+                    className="statement-card"
+                    key={statement.id}
+                    aria-label={`Filter transactions to ${statement.source_basename}`}
+                    aria-pressed={selectedStatement?.id === statement.id}
+                    onClick={() => setSelectedStatementId(statement.id)}
+                  >
                     <div>
                       <span className="institution-mark">
                         {initials(statement.institution ?? "Statement")}
@@ -566,19 +622,27 @@ export function FinanceApp({
                     </div>
                     <StatusPill status={statement.validation_state} />
                     <small>
-                      {statement.transaction_count} rows ·{" "}
+                      <span title={statement.source_basename}>
+                        {statement.source_basename}
+                      </span>
+                      {statementTransactionCounts.get(statement.id) ?? 0} linked ·{" "}
+                      {statement.transaction_count} source rows ·{" "}
                       {statement.unparsed_money_line_count} unparsed
                     </small>
-                  </article>
+                  </button>
                 ))}
               </div>
               <article className="panel transaction-panel">
                 <PanelHead
-                  title="Found transactions"
-                  meta="Statement amounts are read-only; choose categories"
+                  title={
+                    selectedStatement
+                      ? selectedStatement.source_basename
+                      : "Found transactions"
+                  }
+                  meta={`${visibleStatementTransactions.length} shown · amounts are read-only`}
                 />
                 <div className="transaction-list">
-                  {statementTransactions.map((transaction) => {
+                  {visibleStatementTransactions.map((transaction) => {
                     const account = data.accounts.find(
                       (item) => item.id === transaction.account_id,
                     );
@@ -650,11 +714,19 @@ export function FinanceApp({
                       </div>
                     );
                   })}
-                  {!statementTransactions.length ? (
+                  {!visibleStatementTransactions.length ? (
                     <div className="all-clear">
                       <span>✓</span>
-                      <strong>Everything is reviewed</strong>
-                      <p>New statement imports will appear here.</p>
+                      <strong>
+                        {selectedStatement
+                          ? "No linked transactions"
+                          : "Everything is reviewed"}
+                      </strong>
+                      <p>
+                        {selectedStatement
+                          ? "This statement has no transactions linked to it."
+                          : "New statement imports will appear here."}
+                      </p>
                     </div>
                   ) : null}
                 </div>
