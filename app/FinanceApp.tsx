@@ -73,6 +73,7 @@ export function FinanceApp({
   onDeleteManualTransaction,
   onExportTransactions,
   onExportLedger,
+  onCopyLedger,
 }: {
   data: FinanceData;
   user: { displayName: string; role: string };
@@ -91,6 +92,7 @@ export function FinanceApp({
   onDeleteManualTransaction: (transaction: TransactionRow) => Promise<void>;
   onExportTransactions: () => void;
   onExportLedger: () => void;
+  onCopyLedger: () => Promise<void>;
 }) {
   const data = useMemo(() => deriveFinanceView(storedData), [storedData]);
   const [tab, setTab] = useState<Tab>("overview");
@@ -102,6 +104,7 @@ export function FinanceApp({
     null,
   );
   const [importStatus, setImportStatus] = useState<string>("");
+  const [copyStatus, setCopyStatus] = useState<string>("");
   const [isImporting, setIsImporting] = useState(false);
   const [inspectedCell, setInspectedCell] =
     useState<LedgerCellInspection | null>(null);
@@ -662,105 +665,115 @@ export function FinanceApp({
                   </button>
                 ))}
               </div>
-              <article className="panel transaction-panel">
-                <PanelHead
-                  title={
-                    selectedStatement
-                      ? selectedStatement.source_basename
-                      : "Found transactions"
-                  }
-                  meta={`${visibleStatementTransactions.length} shown · amounts are read-only`}
-                />
-                <div className="transaction-list">
-                  {visibleStatementTransactions.map((transaction) => {
-                    const account = data.accounts.find(
-                      (item) => item.id === transaction.account_id,
-                    );
-                    return (
-                      <div className="transaction-row" key={transaction.id}>
-                        <div className="transaction-date">
-                          <strong>
-                            {transaction.transaction_date?.slice(8, 10) ?? "—"}
+              <div className="review-detail">
+                {selectedStatement?.unparsed_money_line_count ? (
+                  <UnparsedLinesPanel
+                    key={selectedStatement.id}
+                    statement={selectedStatement}
+                  />
+                ) : null}
+                <article className="panel transaction-panel">
+                  <PanelHead
+                    title={
+                      selectedStatement
+                        ? selectedStatement.source_basename
+                        : "Found transactions"
+                    }
+                    meta={`${visibleStatementTransactions.length} shown · amounts are read-only`}
+                  />
+                  <div className="transaction-list">
+                    {visibleStatementTransactions.map((transaction) => {
+                      const account = data.accounts.find(
+                        (item) => item.id === transaction.account_id,
+                      );
+                      return (
+                        <div className="transaction-row" key={transaction.id}>
+                          <div className="transaction-date">
+                            <strong>
+                              {transaction.transaction_date?.slice(8, 10) ?? "—"}
+                            </strong>
+                            <span>
+                              {transaction.transaction_date
+                                ? monthLabel(
+                                    transaction.transaction_date.slice(0, 7),
+                                  )
+                                    .split(" ")[0]
+                                    .slice(0, 3)
+                                : ""}
+                            </span>
+                          </div>
+                          <div className="transaction-copy">
+                            <strong>{transaction.description}</strong>
+                            <span>
+                              {account?.label ?? "Account"} ·{" "}
+                              {transaction.source_kind === "source_gap"
+                                ? "source statement still unmatched"
+                                : `page ${transaction.source_page ?? "—"}`}
+                            </span>
+                            {transaction.source_kind === "source_gap" ? (
+                              <small className="source-gap-label">
+                                Needs statement matching
+                              </small>
+                            ) : transaction.match_confidence === "medium" ? (
+                              <small className="source-confidence">
+                                Statement match needs verification
+                              </small>
+                            ) : null}
+                          </div>
+                          <strong
+                            className={
+                              number(transaction.amount_text) < 0
+                                ? "negative-number"
+                                : "positive-number"
+                            }
+                          >
+                            {signedMoney(
+                              number(transaction.amount_text),
+                              transaction.currency,
+                            )}
                           </strong>
-                          <span>
-                            {transaction.transaction_date
-                              ? monthLabel(transaction.transaction_date.slice(0, 7))
-                                  .split(" ")[0]
-                                  .slice(0, 3)
-                              : ""}
-                          </span>
+                          <select
+                            aria-label={`Category for ${transaction.description}`}
+                            defaultValue={transaction.category_id ?? ""}
+                            onChange={(event) =>
+                              reviewTransaction(transaction, event.target.value)
+                            }
+                          >
+                            <option value="" disabled>
+                              Choose category
+                            </option>
+                            {data.categories
+                              .filter(
+                                (category) =>
+                                  !FORMULA_CATEGORY_LABELS.has(category.label),
+                              )
+                              .map((category) => (
+                                <option key={category.id} value={category.id}>
+                                  {category.label}
+                                </option>
+                              ))}
+                          </select>
                         </div>
-                        <div className="transaction-copy">
-                          <strong>{transaction.description}</strong>
-                          <span>
-                            {account?.label ?? "Account"} ·{" "}
-                            {transaction.source_kind === "source_gap"
-                              ? "source statement still unmatched"
-                              : `page ${transaction.source_page ?? "—"}`}
-                          </span>
-                          {transaction.source_kind === "source_gap" ? (
-                            <small className="source-gap-label">
-                              Needs statement matching
-                            </small>
-                          ) : transaction.match_confidence === "medium" ? (
-                            <small className="source-confidence">
-                              Statement match needs verification
-                            </small>
-                          ) : null}
-                        </div>
-                        <strong
-                          className={
-                            number(transaction.amount_text) < 0
-                              ? "negative-number"
-                              : "positive-number"
-                          }
-                        >
-                          {signedMoney(
-                            number(transaction.amount_text),
-                            transaction.currency,
-                          )}
+                      );
+                    })}
+                    {!visibleStatementTransactions.length ? (
+                      <div className="all-clear">
+                        <span>✓</span>
+                        <strong>
+                          {selectedStatement
+                            ? "No linked transactions"
+                            : "Everything is reviewed"}
                         </strong>
-                        <select
-                          aria-label={`Category for ${transaction.description}`}
-                          defaultValue={transaction.category_id ?? ""}
-                          onChange={(event) =>
-                            reviewTransaction(transaction, event.target.value)
-                          }
-                        >
-                          <option value="" disabled>
-                            Choose category
-                          </option>
-                          {data.categories
-                            .filter(
-                              (category) =>
-                                !FORMULA_CATEGORY_LABELS.has(category.label),
-                            )
-                            .map((category) => (
-                              <option key={category.id} value={category.id}>
-                                {category.label}
-                              </option>
-                            ))}
-                        </select>
+                        <p>
+                          {selectedStatement
+                            ? "This statement has no transactions linked to it."
+                            : "New statement imports will appear here."}
+                        </p>
                       </div>
-                    );
-                  })}
-                  {!visibleStatementTransactions.length ? (
-                    <div className="all-clear">
-                      <span>✓</span>
-                      <strong>
-                        {selectedStatement
-                          ? "No linked transactions"
-                          : "Everything is reviewed"}
-                      </strong>
-                      <p>
-                        {selectedStatement
-                          ? "This statement has no transactions linked to it."
-                          : "New statement imports will appear here."}
-                      </p>
-                    </div>
-                  ) : null}
-                </div>
-              </article>
+                    ) : null}
+                  </div>
+                </article>
+              </div>
             </div>
           </section>
         ) : null}
@@ -821,7 +834,20 @@ export function FinanceApp({
                   >
                     Export transactions.csv
                   </button>
+                  <button
+                    className="secondary-button"
+                    type="button"
+                    onClick={() => {
+                      setCopyStatus("Copying…");
+                      void onCopyLedger()
+                        .then(() => setCopyStatus("Private ledger copied"))
+                        .catch(() => setCopyStatus("Could not copy the ledger"));
+                    }}
+                  >
+                    Copy full ledger JSON
+                  </button>
                 </div>
+                {copyStatus ? <p className="import-status">{copyStatus}</p> : null}
               </article>
             </div>
 
@@ -1340,6 +1366,53 @@ function StatusPill({ status }: { status: string }) {
         ? "Reviewed"
         : "Blocked";
   return <span className={`status-pill ${status}`}>{label}</span>;
+}
+
+function UnparsedLinesPanel({
+  statement,
+}: {
+  statement: FinanceData["statements"][number];
+}) {
+  const lines = statement.unparsed_money_lines ?? [];
+  return (
+    <details className="panel unparsed-lines-panel" open>
+      <summary>
+        <div>
+          <p className="eyebrow">Coverage review</p>
+          <h2>Unparsed money lines</h2>
+        </div>
+        <span>
+          {statement.unparsed_money_line_count} line
+          {statement.unparsed_money_line_count === 1 ? "" : "s"}
+        </span>
+      </summary>
+      <p className="unparsed-lines-explainer">
+        These source lines contain money but are not included in the transaction
+        list or ledger totals. Inspect them against the original statement
+        before treating this import as complete.
+      </p>
+      {lines.length ? (
+        <ol className="unparsed-line-list">
+          {lines.map((item, index) => (
+            <li key={`${item.page}:${item.line}:${index}`}>
+              <span>
+                Page {item.page} · line {item.line}
+              </span>
+              <pre>{item.text}</pre>
+            </li>
+          ))}
+        </ol>
+      ) : (
+        <div className="unparsed-evidence-missing">
+          <strong>The count was preserved, but the source lines were not.</strong>
+          <p>
+            Re-import this statement with the current project skill to attach
+            its page-and-line evidence.
+          </p>
+        </div>
+      )}
+    </details>
+  );
 }
 
 function IssueBanner({ count }: { count: number }) {

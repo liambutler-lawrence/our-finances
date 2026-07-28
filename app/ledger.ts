@@ -236,6 +236,10 @@ async function importCanonicalLedger(
         ),
         transaction_count: integer(item.transaction_count),
         unparsed_money_line_count: integer(item.unparsed_money_line_count),
+        unparsed_money_lines: unparsedMoneyLines(
+          item.unparsed_money_lines,
+          "statement.unparsed_money_lines",
+        ),
         imported_at: required(item.imported_at, "statement.imported_at"),
       }) as StatementRow,
   );
@@ -316,6 +320,10 @@ async function importStatementBundle(
 ): Promise<{ data: FinanceData; imported: number }> {
   const manifest = record(payload.manifest, "manifest");
   const sourceTransactions = list(payload.transactions, "transactions");
+  const sourceUnparsedLines = unparsedMoneyLines(
+    payload.unparsed_money_lines,
+    "unparsed_money_lines",
+  );
   const sections = list(manifest.sections ?? [], "manifest.sections");
   const declaredCount = integer(manifest.transaction_count, -1);
   if (declaredCount !== sourceTransactions.length) {
@@ -410,6 +418,7 @@ async function importStatementBundle(
     ),
     transaction_count: sourceTransactions.length,
     unparsed_money_line_count: integer(manifest.unparsed_money_line_count),
+    unparsed_money_lines: sourceUnparsedLines,
     imported_at: now,
     source_manifest: manifest,
   } as StatementRow;
@@ -492,6 +501,21 @@ async function importStatementBundle(
       balances.length +
       1,
   };
+}
+
+function unparsedMoneyLines(value: unknown, label: string) {
+  if (value === undefined || value === null) return [];
+  return list(value, label).map((item, index) => ({
+    page: positiveInteger(item.page, `${label}[${index}].page`),
+    line: positiveInteger(item.line, `${label}[${index}].line`),
+    text: required(item.text, `${label}[${index}].text`),
+  }));
+}
+
+function positiveInteger(value: unknown, label: string) {
+  const parsed = integer(value);
+  if (parsed < 1) throw new Error(`${label} must be a positive integer`);
+  return parsed;
 }
 
 export function reviewTransaction(

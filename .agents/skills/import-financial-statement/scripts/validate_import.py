@@ -31,6 +31,7 @@ def main() -> int:
     errors: list[str] = []
     manifest = bundle.get("manifest") or {}
     transactions = bundle.get("transactions")
+    unparsed_money_lines = bundle.get("unparsed_money_lines")
     if bundle.get("schema_version") != "1.0.0":
         errors.append("unsupported schema_version")
     if not isinstance(transactions, list):
@@ -53,6 +54,21 @@ def main() -> int:
             errors.append(f"transaction {index} has empty raw_text")
     if manifest.get("transaction_count") != len(transactions):
         errors.append("manifest transaction_count does not match rows")
+    if not isinstance(unparsed_money_lines, list):
+        errors.append("unparsed_money_lines must be an array")
+        unparsed_money_lines = []
+    if manifest.get("unparsed_money_line_count") != len(unparsed_money_lines):
+        errors.append("manifest unparsed_money_line_count does not match evidence")
+    for index, item in enumerate(unparsed_money_lines, 1):
+        if not isinstance(item, dict):
+            errors.append(f"unparsed money line {index} must be an object")
+            continue
+        if not isinstance(item.get("page"), int) or item["page"] < 1:
+            errors.append(f"unparsed money line {index} has invalid page")
+        if not isinstance(item.get("line"), int) or item["line"] < 1:
+            errors.append(f"unparsed money line {index} has invalid line")
+        if not str(item.get("text") or "").strip():
+            errors.append(f"unparsed money line {index} has empty text")
     for section in manifest.get("sections", []):
         if section.get("status") == "fail":
             errors.append(

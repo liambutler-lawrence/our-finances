@@ -92,6 +92,29 @@ test("exports both the complete ledger and lossless transaction CSV", async () =
   assert.match(ledger, /source_line_start/);
 });
 
+test("carries unparsed money-line evidence into the private review UI", async () => {
+  const [importer, validator, ledger, app, schema] = await Promise.all([
+    source(
+      ".agents/skills/import-financial-statement/scripts/statement_import.py",
+    ),
+    source(
+      ".agents/skills/import-financial-statement/scripts/validate_import.py",
+    ),
+    source("app/ledger.ts"),
+    source("app/FinanceApp.tsx"),
+    source(
+      ".agents/skills/import-financial-statement/references/canonical-schema.md",
+    ),
+  ]);
+
+  assert.match(importer, /"unparsed_money_lines": audit\["unparsed_money_lines"\]/);
+  assert.match(validator, /unparsed_money_line_count does not match evidence/);
+  assert.match(ledger, /unparsed_money_lines: sourceUnparsedLines/);
+  assert.match(app, /UnparsedLinesPanel/);
+  assert.match(app, /Page \{item\.page\} · line \{item\.line\}/);
+  assert.match(schema, /bundle repeats `unparsed_money_lines\[\]`/);
+});
+
 test("formats asset-denominated ledger cells without crashing", () => {
   assert.equal(money(1.23456789, "AVAX"), "1.23456789 AVAX");
   assert.equal(signedMoney(-1.25, "AVAX"), "−1.25 AVAX");

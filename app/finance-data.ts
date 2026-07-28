@@ -77,7 +77,14 @@ export type StatementRow = {
   validation_state: string;
   transaction_count: number;
   unparsed_money_line_count: number;
+  unparsed_money_lines?: UnparsedMoneyLine[];
   imported_at: string;
+};
+
+export type UnparsedMoneyLine = {
+  page: number;
+  line: number;
+  text: string;
 };
 
 export type TransactionRow = {

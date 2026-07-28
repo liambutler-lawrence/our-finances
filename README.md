@@ -116,9 +116,11 @@ formula result is stored as an aggregate.
 
 Statement-backed transactions preserve their source file, page, line, raw
 text, and exact source amount. Their amount and description are read-only in
-the app; category is the reviewable field. Cash, in-transit, and work-debt
-accounts use the manual account ledger, where transactions can be added,
-edited, or deleted directly.
+the app; category is the reviewable field. Money-bearing source lines that the
+parser cannot classify are also preserved with page and line coordinates and
+shown when their statement is selected. Cash, in-transit, and work-debt accounts
+use the manual account ledger, where transactions can be added, edited, or
+deleted directly.
 
 Historical amounts that are not yet tied to a statement line are canonical
 `source_gap` transactions. They remain visible in totals and the review queue

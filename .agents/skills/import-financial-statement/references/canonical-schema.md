@@ -5,7 +5,8 @@
 For `<stem>`, emit:
 
 - `<stem>.transactions.csv`: portable transaction table.
-- `<stem>.bundle.json`: site import payload containing the manifest and rows.
+- `<stem>.bundle.json`: site import payload containing the manifest,
+  transaction rows, and `unparsed_money_lines[]` page/line/text evidence.
 - `<stem>.manifest.json`: human- and machine-readable reconciliation result.
 - `<stem>.audit.json`: page text, source coverage, and unparsed source lines.
 
@@ -70,6 +71,10 @@ Store:
 - parser warnings and visual-review notes.
 
 An unfamiliar money line is never ignored automatically.
+
+The bundle repeats `unparsed_money_lines[]` so the private statement-review UI
+can expose every unresolved source line without needing access to the local
+audit file. The manifest count must equal the bundled evidence length.
 
 ## Reconciliation
 

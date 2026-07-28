@@ -197,6 +197,12 @@ export function CloudKitFinance() {
     );
   }
 
+  async function copyLedger() {
+    await navigator.clipboard.writeText(
+      JSON.stringify(ledgerRef.current?.data ?? emptyFinanceData),
+    );
+  }
+
   if (identity === undefined) {
     return (
       <AuthCard
@@ -246,6 +252,7 @@ export function CloudKitFinance() {
         onDeleteManualTransaction={deleteManualEntry}
         onExportTransactions={exportCsv}
         onExportLedger={exportLedger}
+        onCopyLedger={copyLedger}
       />
     </>
   );

@@ -1279,7 +1279,12 @@ def write_outputs(
         "validation_state": state,
         "generated_at": datetime.now().astimezone().isoformat(timespec="seconds"),
     }
-    bundle = {"schema_version": SCHEMA_VERSION, "manifest": manifest, "transactions": transactions}
+    bundle = {
+        "schema_version": SCHEMA_VERSION,
+        "manifest": manifest,
+        "transactions": transactions,
+        "unparsed_money_lines": audit["unparsed_money_lines"],
+    }
     stem = source.stem
     csv_path = output_dir / f"{stem}.transactions.csv"
     with csv_path.open("w", encoding="utf-8", newline="") as stream:
