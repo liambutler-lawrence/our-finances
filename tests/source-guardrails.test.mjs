@@ -173,7 +173,40 @@ test("carries unparsed money-line evidence into the private review UI", async ()
   assert.match(ledger, /unparsed_money_lines: sourceUnparsedLines/);
   assert.match(app, /UnparsedLinesPanel/);
   assert.match(app, /Page \{item\.page\} · line \{item\.line\}/);
-  assert.match(schema, /bundle repeats `unparsed_money_lines\[\]`/);
+  assert.match(schema, /Candidate bundles repeat `unparsed_money_lines\[\]`/);
+});
+
+test("requires exact visual statement verification before import", async () => {
+  const [skill, importer, validator, ledger, schema] = await Promise.all([
+    source(".agents/skills/import-financial-statement/SKILL.md"),
+    source(
+      ".agents/skills/import-financial-statement/scripts/statement_import.py",
+    ),
+    source(
+      ".agents/skills/import-financial-statement/scripts/validate_import.py",
+    ),
+    source("app/ledger.ts"),
+    source(
+      ".agents/skills/import-financial-statement/references/canonical-schema.md",
+    ),
+  ]);
+
+  assert.match(skill, /render every page/i);
+  assert.match(skill, /Verify every transaction individually/i);
+  assert.doesNotMatch(skill, /Compare at least five transactions/i);
+  assert.match(importer, /--visual-review/);
+  assert.match(importer, /build_clean_statements/);
+  assert.match(importer, /all_money_lines_classified/);
+  assert.match(importer, /verified_transaction_ids/);
+  assert.match(validator, /clean statement transactions do not match/);
+  assert.match(validator, /every transaction ID must be visually verified/);
+  assert.match(ledger, /predates visual completeness verification/);
+  assert.match(ledger, /Every statement date range must be visually verified/);
+  assert.match(ledger, /visual review must identify every verified transaction/i);
+  assert.match(schema, /"date_range"/);
+  assert.match(schema, /"starting_balance"/);
+  assert.match(schema, /"transactions"/);
+  assert.match(schema, /"ending_balance"/);
 });
 
 test("formats asset-denominated ledger cells without crashing", () => {
@@ -572,6 +605,154 @@ test("derives monthly cells and balance formulas from transactions and snapshots
   assert.equal(actualEnding?.formula, null);
   assert.match(actualEnding?.id ?? "", /^source:balance:/);
   assert.equal(data.aggregates.some((item) => item.id === "obsolete"), false);
+});
+
+test("values fiat and asset accounts using Price Lookups semantics", () => {
+  const data = deriveLedgerData({
+    accounts: [
+      {
+        id: "usd-account",
+        label: "USD account",
+        currency: "USD",
+      },
+      {
+        id: "eur-account",
+        label: "EUR account",
+        currency: "EUR",
+      },
+      {
+        id: "asset-account",
+        label: "Asset account",
+        currency: "ACME",
+        asset_symbol: "ACME",
+      },
+    ],
+    categories: [
+      {
+        id: "income",
+        label: "Salary",
+        group_name: "income",
+        sort_order: 10,
+      },
+      {
+        id: "spending",
+        label: "Groceries",
+        group_name: "spending",
+        sort_order: 11,
+      },
+      {
+        id: "system",
+        label: "INVESTMENT BUY/SELL",
+        group_name: "system",
+        sort_order: 5,
+      },
+      {
+        id: "excluded",
+        label: "Wedding",
+        group_name: "spending",
+        sort_order: 36,
+      },
+    ],
+    transactions: [
+      {
+        id: "income-row",
+        account_id: "usd-account",
+        category_id: "income",
+        transaction_date: "2026-06-01",
+        amount_text: "10",
+        currency: "USD",
+      },
+      {
+        id: "spending-row",
+        account_id: "eur-account",
+        category_id: "spending",
+        transaction_date: "2026-06-02",
+        amount_text: "-5",
+        currency: "EUR",
+      },
+      {
+        id: "asset-row",
+        account_id: "asset-account",
+        category_id: "system",
+        transaction_date: "2026-06-03",
+        amount_text: "0.5",
+        currency: "ACME",
+      },
+      {
+        id: "excluded-row",
+        account_id: "usd-account",
+        category_id: "excluded",
+        transaction_date: "2026-06-04",
+        amount_text: "-3",
+        currency: "USD",
+      },
+    ],
+    balances: [],
+    prices: [
+      {
+        symbol: "USD",
+        kind: "cash_bill_count",
+        quote_currency: "USD",
+        value_text: "2",
+      },
+      {
+        symbol: "USD",
+        kind: "cash_bill_value",
+        quote_currency: "MXN",
+        value_text: "34",
+      },
+      {
+        symbol: "USD",
+        kind: "cash_bill_value",
+        quote_currency: "USD",
+        value_text: "2",
+      },
+      {
+        symbol: "EUR",
+        kind: "cash_coin_count",
+        quote_currency: "EUR",
+        value_text: "2",
+      },
+      {
+        symbol: "EUR",
+        kind: "cash_coin_value",
+        quote_currency: "MXN",
+        value_text: "40",
+      },
+      {
+        symbol: "EUR",
+        kind: "cash_coin_value",
+        quote_currency: "USD",
+        value_text: "2.4",
+      },
+      {
+        symbol: "ACME",
+        kind: "stock",
+        quote_currency: "USD",
+        value_text: "100",
+      },
+    ],
+    statements: [],
+    issues: [],
+    aggregates: [],
+  });
+  const summaries = new Map(
+    data.aggregates
+      .filter((item) => item.kind === "month_summary")
+      .map((item) => [item.label, item]),
+  );
+  assert.equal(Number(summaries.get("income")?.amount_mxn_text), 170);
+  assert.equal(Number(summaries.get("spending")?.amount_mxn_text), -100);
+  assert.equal(Number(summaries.get("market")?.amount_mxn_text), 850);
+  assert.equal(Number(summaries.get("net")?.amount_mxn_text), 920);
+  assert.equal(Number(summaries.get("net")?.amount_usd_text), 54);
+
+  const wedding = data.aggregates.find(
+    (item) =>
+      item.kind === "category_summary" && item.category_id === "excluded",
+  );
+  assert.equal(Number(wedding?.amount_mxn_text), -51);
+  assert.equal(Number(wedding?.amount_usd_text), -3);
 });
 
 test("manual account transactions can be added, edited, and deleted", () => {

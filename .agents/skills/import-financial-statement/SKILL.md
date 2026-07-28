@@ -1,22 +1,22 @@
 ---
 name: import-financial-statement
-description: Convert bank, credit-card, brokerage, payment-app, savings, and multi-currency statement PDFs or CSVs into the Our Finances canonical import bundle. Use for new monthly statements, backfills, statement reconciliation, transaction extraction, categorization, duplicate detection, or preparing data for the statement-review UI.
+description: Visually verify and convert bank, credit-card, brokerage, payment-app, savings, and multi-currency statement PDFs or CSVs into exact Our Finances canonical import bundles. Use for new monthly statements, backfills, statement reconciliation, complete transaction extraction, categorization, duplicate detection, or preparing data for the statement-review UI.
 ---
 
 # Import Financial Statement
 
-Produce a lossless, auditable import bundle. Parsing is not complete merely
-because plausible transactions were found; source coverage and reconciliation
-must also pass.
+Produce a lossless, visually verified import bundle. Extraction and
+categorization have different confidence standards: every source fact must be
+exact, while suggested budget categories may remain editable.
 
 ## Workflow
 
 1. Keep the source outside version control. Never copy a statement, extracted
    text, bundle, or real transaction sample into tracked files.
 2. Hash the source before processing. Use the hash as the duplicate guard.
-3. For PDFs, render every page or every distinct layout plus all transaction
-   pages. Visually compare the render with extracted text; do not trust text
-   extraction alone.
+3. For PDFs, render every page. Inspect the rendered pages yourself with the
+   image/PDF viewing tools available in the thread. Do not treat OCR, extracted
+   text, tables, regular expressions, or parser output as visual verification.
 4. Run:
 
    ```bash
@@ -25,44 +25,74 @@ must also pass.
      --output-dir .private/imports
    ```
 
-5. Read the generated manifest and audit file. Inspect every warning and every
-   `unparsed_money_line`.
-6. Compare at least five transactions across the beginning, middle, and end of
-   each account section. Check dates, descriptions, signs, decimal separators,
-   fees, balances, quantities, prices, and page locators.
-7. Run:
+5. Treat the first result as a candidate extraction. Read its manifest and
+   audit, then compare it against every rendered page from top to bottom.
+6. Establish, for every account/currency section:
+
+   - the exact date range;
+   - whether a starting balance is present and its exact value;
+   - every transaction, in source order, with every available field;
+   - whether an ending balance is present and its exact value.
+
+7. Verify every transaction individually, including multiline descriptions,
+   dates, posted dates, signs, decimal separators, currencies, fees, running
+   balances, quantities, prices, symbols, IDs, and page/line locators. A
+   plausible count or sample check is not sufficient.
+8. Resolve every money-bearing line decisively as a transaction, balance,
+   statement total, disclosure, rate, holding, or other non-transaction. If a
+   genuine transaction was missed, improve the parser or add the complete
+   private record and rerun. Do not leave a “maybe transaction” row.
+9. Write a private visual-review record following
+   [references/canonical-schema.md](references/canonical-schema.md), then rerun:
+
+   ```bash
+   python .agents/skills/import-financial-statement/scripts/statement_import.py \
+     path/to/statement.pdf \
+     --output-dir .private/imports \
+     --visual-review .private/imports/<statement>.visual-review.json
+   ```
+
+10. Run:
 
    ```bash
    python .agents/skills/import-financial-statement/scripts/validate_import.py \
      .private/imports/<statement>.bundle.json
    ```
 
-8. Categorize only after extraction is stable. Preserve the original
-   description, amount, currency, and raw source line when changing a category.
-9. Import the bundle through the site's review queue. Do not mark a statement
-   reviewed while reconciliation fails or source money lines remain unparsed.
+11. Categorize only after extraction is exact. Preserve all source fields when
+    changing a category. `Needs review` is valid for categorization; it is not
+    valid for whether a source row is a transaction.
+12. Import only a validator-approved bundle. The site rejects candidate,
+    unreviewed, ambiguous, or unreconciled bundles.
 
 ## Completion gates
 
 Require all of the following:
 
 - The source SHA-256 is recorded.
-- Every page has extracted text or an explicit image-only warning.
+- Every PDF page was rendered and visually inspected by the agent.
+- The visual-review page list exactly matches the PDF page list.
 - Every account section and currency is represented.
-- Every transaction-like source line is parsed or listed verbatim in the audit
-  file with a page and line number.
+- Date range, starting-balance presence/value, every transaction, and
+  ending-balance presence/value are visually verified against source evidence.
+- Every money-bearing source line has one definitive classification.
+- `unparsed_money_lines[]` is empty in an importable bundle.
 - Opening balance + signed activity = closing balance within the currency
   tolerance whenever the statement supplies both balances.
 - Statement-level totals, fees, payments, interest, and holdings reconcile when
   present.
 - Temporary authorizations, reversals, transfers, credit-card payments, and
   investment buys/sells remain distinct records.
+- The clean `statements[]` structure contains `date_range`,
+  `starting_balance`, `transactions`, and `ending_balance` for every section.
 - The validator reports `ready_for_review`; `ready_for_import` is allowed only
   after category review.
 
-If a gate fails, return the partial bundle and a concise discrepancy list. Do
-not silently invent a balancing transaction, merge away a reversal, or discard
-an unfamiliar line.
+If a gate fails, keep the candidate bundle and audit privately and report the
+precise blocker. A candidate is diagnostic evidence, not an importable output.
+Do not invent a balancing transaction, merge away a reversal, discard an
+unfamiliar line, or ask the user to resolve an ambiguity that careful source
+inspection can settle.
 
 ## Parsing rules
 
@@ -78,7 +108,8 @@ an unfamiliar line.
   `Credit card payments`; neither is spending.
 - Put uncertain classifications in `Needs review` with confidence below 0.8.
 - Prefer a specific source parser when detected. The generic parser is a
-  recovery path and must never be treated as automatically complete.
+  recovery path and can pass only after complete visual verification and
+  explicit resolution of its warning.
 
 ## Canonical contract
 
@@ -88,7 +119,7 @@ hand. Keep the site importer and validator compatible with that contract.
 
 The importer currently recognizes Apple Card, Wise, Nu, Cash App, Capital One,
 Robinhood, and generic delimited transaction CSVs. Unsupported layouts still
-produce a lossless audit artifact and a blocked partial bundle.
+produce a lossless candidate audit and a blocked bundle.
 
 ## Categorization
 

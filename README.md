@@ -116,11 +116,12 @@ formula result is stored as an aggregate.
 
 Statement-backed transactions preserve their source file, page, line, raw
 text, and exact source amount. Their amount and description are read-only in
-the app; category is the reviewable field. Money-bearing source lines that the
-parser cannot classify are also preserved with page and line coordinates and
-shown when their statement is selected. Cash, in-transit, and work-debt accounts
-use the manual account ledger, where transactions can be added, edited, or
-deleted directly.
+the app; category is the reviewable field. Historical migration records may
+still expose unresolved money-bearing lines, but new statement bundles are
+accepted only after every page and transaction is visually verified and every
+money-bearing line is definitively classified. Cash, in-transit, and work-debt
+accounts use the manual account ledger, where transactions can be added,
+edited, or deleted directly.
 
 Historical amounts that are not yet tied to a statement line are canonical
 `source_gap` transactions. They remain visible in totals and the review queue
@@ -131,7 +132,10 @@ backfill replaces those gaps with reconciled source records.
 
 Two private JSON formats are accepted:
 
-- `1.0.0` canonical statement bundles produced by the repository skill.
+- `1.1.0` visually verified canonical statement bundles produced by the
+  repository skill. Each account/currency section contains an exact date range,
+  starting-balance presence/value, complete transaction list, and
+  ending-balance presence/value.
 - `our-finances-v2` full-ledger migrations containing canonical transactions,
   balance snapshots, prices, statements, and audit findings. This format
   explicitly replaces the private ledger and never accepts stored aggregates.

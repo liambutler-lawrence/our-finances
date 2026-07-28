@@ -40,6 +40,15 @@ export const SOURCE_BALANCE_CATEGORY_LABELS = new Set([
   "ACTUAL ENDING BALANCE",
 ]);
 
+const MONTH_SUMMARY_EXCLUDED_LABELS = new Set([
+  "BODA",
+  "WEDDING",
+  "WEDDING DONATIONS",
+  "HONEYMOON",
+  "HONEYMOON ACTIVIDADES",
+  "HONEYMOON ACTIVITIES",
+]);
+
 export function accountEntryMode(account) {
   if (account?.entry_mode === "manual" || account?.entry_mode === "statement") {
     return account.entry_mode;
@@ -77,7 +86,7 @@ export function deriveLedgerData(source) {
       ),
   );
   const balances = source.balances ?? [];
-  const usdToMxn = findUsdToMxnRate(source.prices ?? []);
+  const priceBook = buildPriceBook(source.prices ?? []);
   const cells = new Map();
   const activeAccountMonths = new Set();
 
@@ -89,7 +98,7 @@ export function deriveLedgerData(source) {
     const amount = finiteNumber(transaction.amount_text);
     if (amount === null) continue;
     const currency = transaction.currency || account.currency || "MXN";
-    const converted = convertAmount(amount, currency, usdToMxn);
+    const converted = convertAccountAmount(amount, account, priceBook);
     const key = `${month}:${category.id}:${account.id}`;
     const current = cells.get(key);
     cells.set(key, {
@@ -206,10 +215,10 @@ export function deriveLedgerData(source) {
       const definition = formulaByLabel.get(formulaRow.label);
       if (!definition?.category) continue;
       const sourceBalance = formulaRow.sourceBalance ?? null;
-      const converted = convertAmount(
+      const converted = convertAccountAmount(
         formulaRow.amount,
-        account.currency,
-        usdToMxn,
+        account,
+        priceBook,
       );
       const key = `${month}:${definition.category.id}:${account.id}`;
       cells.set(key, {
@@ -241,7 +250,7 @@ export function deriveLedgerData(source) {
     transactions,
     categories,
     accountById,
-    usdToMxn,
+    priceBook,
   );
   const months = [
     ...new Set([
@@ -313,7 +322,7 @@ function summarizeCategories(cells, categories) {
   return [...summaries.values()];
 }
 
-function summarizeMonths(transactions, categories, accountById, usdToMxn) {
+function summarizeMonths(transactions, categories, accountById, priceBook) {
   const categoryById = new Map(categories.map((item) => [item.id, item]));
   const totals = new Map();
   for (const transaction of transactions) {
@@ -322,17 +331,21 @@ function summarizeMonths(transactions, categories, accountById, usdToMxn) {
     const account = accountById.get(transaction.account_id);
     const amount = finiteNumber(transaction.amount_text);
     if (!month || !category || !account || amount === null) continue;
-    const converted = convertAmount(
-      amount,
-      transaction.currency || account.currency,
-      usdToMxn,
-    );
+    const converted = convertAccountAmount(amount, account, priceBook);
     const current = totals.get(month) ?? {
       income: { mxn: 0, usd: 0 },
       spending: { mxn: 0, usd: 0 },
       market: { mxn: 0, usd: 0 },
       net: { mxn: 0, usd: 0 },
     };
+    if (
+      MONTH_SUMMARY_EXCLUDED_LABELS.has(
+        String(category.label ?? "").trim().toUpperCase(),
+      )
+    ) {
+      totals.set(month, current);
+      continue;
+    }
     current.net.mxn += converted.mxn;
     current.net.usd += converted.usd;
     if (category.group_name === "income") {
@@ -343,7 +356,7 @@ function summarizeMonths(transactions, categories, accountById, usdToMxn) {
       current.spending.mxn += converted.mxn;
       current.spending.usd += converted.usd;
     }
-    if (category.label === "INVESTMENT BUY/SELL") {
+    if (category.group_name === "system") {
       current.market.mxn += converted.mxn;
       current.market.usd += converted.usd;
     }
@@ -400,33 +413,115 @@ function nextMonth(month) {
   return date.toISOString().slice(0, 10);
 }
 
-function findUsdToMxnRate(prices) {
-  const pairs = new Map();
+function buildPriceBook(prices) {
+  const quotesBySymbol = new Map();
+  const cashGroups = new Map();
+
+  const setQuote = (symbol, quoteCurrency, value, priority) => {
+    if (!symbol || !["MXN", "USD"].includes(quoteCurrency)) return;
+    const numericValue = finiteNumber(value);
+    if (numericValue === null) return;
+    const symbolKey = String(symbol).toUpperCase();
+    const quotes = quotesBySymbol.get(symbolKey) ?? {};
+    const current = quotes[quoteCurrency];
+    if (!current || priority >= current.priority) {
+      quotes[quoteCurrency] = { value: numericValue, priority };
+    }
+    quotesBySymbol.set(symbolKey, quotes);
+  };
+
   for (const price of prices) {
-    if (price.quote_currency !== "MXN" && price.quote_currency !== "USD") {
+    const symbol = String(price.symbol ?? "").toUpperCase();
+    const kind = String(price.kind ?? "");
+    if (["currency", "crypto", "stock"].includes(kind)) {
+      setQuote(symbol, price.quote_currency, price.value_text, 3);
       continue;
     }
+    const match = kind.match(/^cash_(bill|coin)_(count|value)$/);
+    if (!match) continue;
+    const groupKey = `${symbol}:${match[1]}`;
+    const group = cashGroups.get(groupKey) ?? {
+      symbol,
+      count: null,
+      values: {},
+    };
     const value = finiteNumber(price.value_text);
-    if (value === null || value === 0) continue;
-    const key = `${price.symbol}:${price.kind}`;
-    const pair = pairs.get(key) ?? {};
-    pair[price.quote_currency] = value;
-    pairs.set(key, pair);
+    if (match[2] === "count" && price.quote_currency === symbol) {
+      group.count = value;
+    }
+    if (
+      match[2] === "value" &&
+      ["MXN", "USD"].includes(price.quote_currency)
+    ) {
+      group.values[price.quote_currency] = value;
+    }
+    cashGroups.set(groupKey, group);
   }
-  for (const pair of pairs.values()) {
-    if (pair.MXN && pair.USD) return pair.MXN / pair.USD;
+
+  const cashTotals = new Map();
+  for (const group of cashGroups.values()) {
+    if (group.count === null || group.count === 0) continue;
+    const totals = cashTotals.get(group.symbol) ?? {
+      count: 0,
+      values: { MXN: 0, USD: 0 },
+    };
+    totals.count += group.count;
+    for (const quoteCurrency of ["MXN", "USD"]) {
+      totals.values[quoteCurrency] += group.values[quoteCurrency] ?? 0;
+    }
+    cashTotals.set(group.symbol, totals);
   }
-  return null;
+
+  for (const [symbol, totals] of cashTotals) {
+    for (const quoteCurrency of ["MXN", "USD"]) {
+      setQuote(
+        symbol,
+        quoteCurrency,
+        totals.values[quoteCurrency] / totals.count,
+        2,
+      );
+    }
+  }
+
+  setQuote("MXN", "MXN", 1, 4);
+  setQuote("USD", "USD", 1, 4);
+
+  const usdMxn =
+    quotesBySymbol.get("USD")?.MXN?.value ??
+    reciprocal(quotesBySymbol.get("MXN")?.USD?.value);
+  const mxnUsd =
+    quotesBySymbol.get("MXN")?.USD?.value ?? reciprocal(usdMxn);
+  if (usdMxn !== null) setQuote("USD", "MXN", usdMxn, 4);
+  if (mxnUsd !== null) setQuote("MXN", "USD", mxnUsd, 4);
+
+  const completed = new Map();
+  for (const [symbol, quotes] of quotesBySymbol) {
+    let mxn = quotes.MXN?.value ?? null;
+    let usd = quotes.USD?.value ?? null;
+    if (mxn === null && usd !== null && usdMxn !== null) {
+      mxn = usd * usdMxn;
+    }
+    if (usd === null && mxn !== null && mxnUsd !== null) {
+      usd = mxn * mxnUsd;
+    }
+    completed.set(symbol, { mxn: mxn ?? 0, usd: usd ?? 0 });
+  }
+  return completed;
 }
 
-function convertAmount(amount, currency, usdToMxn) {
-  if (currency === "MXN") {
-    return { mxn: amount, usd: usdToMxn ? amount / usdToMxn : 0 };
-  }
-  if (currency === "USD") {
-    return { mxn: usdToMxn ? amount * usdToMxn : 0, usd: amount };
-  }
-  return { mxn: 0, usd: 0 };
+function convertAccountAmount(amount, account, priceBook) {
+  const symbol = String(
+    account?.asset_symbol || account?.currency || "MXN",
+  ).toUpperCase();
+  const quotes = priceBook.get(symbol);
+  return {
+    mxn: amount * (quotes?.mxn ?? 0),
+    usd: amount * (quotes?.usd ?? 0),
+  };
+}
+
+function reciprocal(value) {
+  return value === null || value === undefined || value === 0 ? null : 1 / value;
 }
 
 function finiteNumber(value) {

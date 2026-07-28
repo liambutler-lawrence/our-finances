@@ -17,8 +17,8 @@ from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any, Iterable
 
-SCHEMA_VERSION = "1.0.0"
-PARSER_VERSION = "1.0.1"
+SCHEMA_VERSION = "1.1.0"
+PARSER_VERSION = "1.2.0"
 MONEY_RE = re.compile(
     r"(?<![\w])(?:"
     r"[+-]?\s*[$€£]\s*\(?\d[\d.,]*\)?"
@@ -527,10 +527,18 @@ def parse_wise(
     text = "\n".join(page.text for page in pages)
     currency_match = re.search(r"Extracto en\s+([A-Z]{3})", text)
     currency = currency_match.group(1) if currency_match else "USD"
-    period_dates = [parse_spanish_date(line) for line in text.splitlines()]
-    period_dates = [value for value in period_dates if value]
-    period_start = iso(min(period_dates)) if period_dates else None
-    period_end = iso(max(period_dates)) if period_dates else None
+    period_match = re.search(
+        r"(\d{1,2}\s+de\s+[A-Za-záéíóúñ]+\s+de\s+20\d{2})"
+        r"[^\n]*?-\s*"
+        r"(\d{1,2}\s+de\s+[A-Za-záéíóúñ]+\s+de\s+20\d{2})",
+        text,
+        re.IGNORECASE,
+    )
+    if period_match:
+        period_start = iso(parse_spanish_date(period_match.group(1)))
+        period_end = iso(parse_spanish_date(period_match.group(2)))
+    else:
+        period_start, period_end = find_period(text)
     closing_match = re.search(
         rf"{currency}\s+el\s+.+?\s+([\d.,]+)\s+{currency}", text, re.IGNORECASE
     )
@@ -564,8 +572,15 @@ def parse_wise(
             amount, balance = values[-2], values[-1]
             description = re.split(r"\s{2,}", first.strip())[0]
             external_match = re.search(r"Transacci[oó]n:\s*([^\s|]+)", joined)
-            tx_type = "interest" if "intereses" in description.lower() else "transfer"
-            if "tarjeta" in description.lower():
+            lowered_description = description.lower()
+            tx_type = (
+                "interest"
+                if "intereses" in lowered_description
+                else "fee"
+                if re.search(r"\b(charges?|comisi[oó]n|fee)\b", lowered_description)
+                else "transfer"
+            )
+            if "tarjeta" in lowered_description:
                 tx_type = "purchase"
             sequence += 1
             transactions.append(
@@ -589,9 +604,6 @@ def parse_wise(
             parsed.update(
                 (page.page, line_number) for line_number in range(start, end + 1)
             )
-    if section.closing_balance is not None:
-        total = sum((Decimal(tx["amount"]) for tx in transactions), Decimal("0"))
-        section.opening_balance = decimal_text(Decimal(section.closing_balance) - total)
     return [section], transactions, parsed, []
 
 
@@ -1092,6 +1104,212 @@ def reconcile_sections(
     return results
 
 
+def verified_evidence(
+    review_section: dict[str, Any],
+    field: str,
+    *,
+    amount: str | None = None,
+    currency: str | None = None,
+) -> dict[str, Any]:
+    evidence = review_section.get(field)
+    if not isinstance(evidence, dict):
+        evidence = {}
+    included = amount is not None
+    return {
+        "included": included,
+        "amount": amount,
+        "currency": currency if included else None,
+        "source_page": evidence.get("source_page"),
+        "source_line_start": evidence.get("source_line_start"),
+        "source_line_end": evidence.get("source_line_end"),
+        "raw_text": evidence.get("raw_text"),
+        "verification_status": (
+            "verified"
+            if evidence.get("verified") is True and included
+            else "verified_absent"
+            if evidence.get("verified") is True and not included
+            else "unverified"
+        ),
+    }
+
+
+def build_clean_statements(
+    sections: list[Section],
+    transactions: list[dict[str, Any]],
+    visual_review: dict[str, Any] | None,
+) -> list[dict[str, Any]]:
+    review_sections = {
+        item.get("account_section_id"): item
+        for item in ((visual_review or {}).get("sections") or [])
+        if isinstance(item, dict)
+    }
+    clean: list[dict[str, Any]] = []
+    for section in sections:
+        review_section = review_sections.get(section.account_section_id, {})
+        date_evidence = review_section.get("date_range")
+        if not isinstance(date_evidence, dict):
+            date_evidence = {}
+        clean.append(
+            {
+                "account_section_id": section.account_section_id,
+                "account": {
+                    "name": section.account_name,
+                    "last4": section.account_last4,
+                    "type": section.account_type,
+                    "currency": section.currency,
+                },
+                "date_range": {
+                    "start": section.period_start,
+                    "end": section.period_end,
+                    "source_page": date_evidence.get("source_page"),
+                    "source_line_start": date_evidence.get("source_line_start"),
+                    "source_line_end": date_evidence.get("source_line_end"),
+                    "raw_text": date_evidence.get("raw_text"),
+                    "verification_status": (
+                        "verified"
+                        if date_evidence.get("verified") is True
+                        else "unverified"
+                    ),
+                },
+                "starting_balance": verified_evidence(
+                    review_section,
+                    "starting_balance",
+                    amount=section.opening_balance,
+                    currency=section.currency,
+                ),
+                "transactions": [
+                    transaction
+                    for transaction in transactions
+                    if transaction["account_section_id"] == section.account_section_id
+                ],
+                "ending_balance": verified_evidence(
+                    review_section,
+                    "ending_balance",
+                    amount=section.closing_balance,
+                    currency=section.currency,
+                ),
+            }
+        )
+    return clean
+
+
+def validate_visual_review(
+    visual_review: dict[str, Any] | None,
+    *,
+    source_hash: str,
+    pages: list[dict[str, Any]],
+    sections: list[Section],
+    transactions: list[dict[str, Any]],
+    warnings: list[str],
+) -> list[str]:
+    errors: list[str] = []
+    if not isinstance(visual_review, dict):
+        return ["Visual review is required before a bundle can be imported"]
+    if not str(visual_review.get("reviewer") or "").strip():
+        errors.append("Visual review must identify the reviewer")
+    if not str(visual_review.get("reviewed_at") or "").strip():
+        errors.append("Visual review must include a reviewed_at timestamp")
+    if visual_review.get("source_sha256") != source_hash:
+        errors.append("Visual review source_sha256 does not match the statement")
+    expected_pages = sorted(
+        page["page"] for page in pages if isinstance(page.get("page"), int)
+    )
+    reviewed_pages = sorted(
+        page
+        for page in visual_review.get("reviewed_pages", [])
+        if isinstance(page, int)
+    )
+    if reviewed_pages != expected_pages:
+        errors.append("Visual review must explicitly cover every PDF page")
+    if visual_review.get("all_money_lines_classified") is not True:
+        errors.append("Visual review must classify every money-bearing source line")
+    if sorted(visual_review.get("resolved_warnings") or []) != sorted(warnings):
+        errors.append("Visual review must explicitly resolve every parser warning")
+    review_sections = {
+        item.get("account_section_id"): item
+        for item in (visual_review.get("sections") or [])
+        if isinstance(item, dict)
+    }
+    for section in sections:
+        item = review_sections.get(section.account_section_id)
+        if not isinstance(item, dict):
+            errors.append(
+                f"Missing visual review for section {section.account_section_id}"
+            )
+            continue
+        date_range = item.get("date_range")
+        if not isinstance(date_range, dict) or date_range.get("verified") is not True:
+            errors.append(
+                f"Date range is not visually verified for {section.account_section_id}"
+            )
+        else:
+            if (
+                date_range.get("start") != section.period_start
+                or date_range.get("end") != section.period_end
+            ):
+                errors.append(
+                    f"Visual date range disagrees for {section.account_section_id}"
+                )
+            if not section.period_start or not section.period_end:
+                errors.append(
+                    f"Date range is incomplete for {section.account_section_id}"
+                )
+            if not date_range.get("raw_text"):
+                errors.append(
+                    f"Date range evidence is missing for {section.account_section_id}"
+                )
+        for field, amount in (
+            ("starting_balance", section.opening_balance),
+            ("ending_balance", section.closing_balance),
+        ):
+            evidence = item.get(field)
+            if not isinstance(evidence, dict) or evidence.get("verified") is not True:
+                errors.append(
+                    f"{field} is not visually verified for {section.account_section_id}"
+                )
+                continue
+            if evidence.get("included") is not (amount is not None):
+                errors.append(
+                    f"{field} presence disagrees for {section.account_section_id}"
+                )
+            if amount is not None:
+                try:
+                    same_amount = Decimal(str(evidence.get("amount"))) == Decimal(amount)
+                except (InvalidOperation, TypeError):
+                    same_amount = False
+                if not same_amount:
+                    errors.append(
+                        f"{field} amount disagrees for {section.account_section_id}"
+                    )
+                if not evidence.get("raw_text"):
+                    errors.append(
+                        f"{field} evidence is missing for {section.account_section_id}"
+                    )
+        section_transaction_count = sum(
+            transaction["account_section_id"] == section.account_section_id
+            for transaction in transactions
+        )
+        section_transaction_ids = sorted(
+            transaction["transaction_id"]
+            for transaction in transactions
+            if transaction["account_section_id"] == section.account_section_id
+        )
+        if item.get("transactions_verified") is not True:
+            errors.append(
+                f"Transactions are not visually verified for {section.account_section_id}"
+            )
+        if item.get("transaction_count") != section_transaction_count:
+            errors.append(
+                f"Visual transaction count disagrees for {section.account_section_id}"
+            )
+        if sorted(item.get("verified_transaction_ids") or []) != section_transaction_ids:
+            errors.append(
+                f"Every transaction ID must be individually verified for "
+                f"{section.account_section_id}"
+            )
+    return errors
+
+
 def ignored_money_line(text: str) -> str | None:
     patterns = {
         r"^\s*(Total|TOTAL|All Accounts|Portfolio Value|Total Securities|Net Account Balance)": "statement summary",
@@ -1258,12 +1476,30 @@ def write_outputs(
     sections: list[Section],
     transactions: list[dict[str, Any]],
     audit: dict[str, Any],
+    visual_review: dict[str, Any] | None,
 ) -> tuple[Path, dict[str, Any]]:
     output_dir.mkdir(parents=True, exist_ok=True)
     reconciliation = reconcile_sections(sections, transactions)
     blocked_reconciliation = any(item["status"] == "fail" for item in reconciliation)
     blocked_coverage = bool(audit["unparsed_money_lines"])
-    state = "blocked" if blocked_reconciliation or blocked_coverage else "ready_for_review"
+    visual_review_errors = validate_visual_review(
+        visual_review,
+        source_hash=source_hash,
+        pages=audit.get("pages", []),
+        sections=sections,
+        transactions=transactions,
+        warnings=audit["warnings"],
+    )
+    state = (
+        "blocked"
+        if blocked_reconciliation or blocked_coverage or visual_review_errors
+        else "ready_for_review"
+    )
+    clean_statements = build_clean_statements(
+        sections,
+        transactions,
+        visual_review,
+    )
     manifest = {
         "schema_version": SCHEMA_VERSION,
         "parser_version": PARSER_VERSION,
@@ -1275,6 +1511,8 @@ def write_outputs(
         "transaction_count": len(transactions),
         "sections": reconciliation,
         "warnings": audit["warnings"],
+        "visual_review": visual_review,
+        "visual_review_errors": visual_review_errors,
         "unparsed_money_line_count": len(audit["unparsed_money_lines"]),
         "validation_state": state,
         "generated_at": datetime.now().astimezone().isoformat(timespec="seconds"),
@@ -1282,6 +1520,7 @@ def write_outputs(
     bundle = {
         "schema_version": SCHEMA_VERSION,
         "manifest": manifest,
+        "statements": clean_statements,
         "transactions": transactions,
         "unparsed_money_lines": audit["unparsed_money_lines"],
     }
@@ -1307,12 +1546,22 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("source", type=Path)
     parser.add_argument("--output-dir", type=Path, default=Path(".private/imports"))
+    parser.add_argument(
+        "--visual-review",
+        type=Path,
+        help="Private JSON record created after visually inspecting every source page",
+    )
     args = parser.parse_args()
     source = args.source.expanduser().resolve()
     if not source.is_file():
         parser.error(f"source not found: {source}")
     source_hash = sha256_bytes(source)
     statement_id = short_id("stmt", source_hash)
+    visual_review = (
+        json.loads(args.visual_review.read_text(encoding="utf-8"))
+        if args.visual_review
+        else None
+    )
     if source.suffix.lower() == ".pdf":
         pages = extract_pdf_pages(source)
         all_text = "\n".join(page.text for page in pages)
@@ -1344,6 +1593,7 @@ def main() -> int:
         sections,
         transactions,
         audit,
+        visual_review,
     )
     print(json.dumps({"bundle": str(bundle_path), "manifest": manifest}, indent=2))
     return 0 if manifest["validation_state"] != "blocked" else 2

@@ -5,12 +5,65 @@
 For `<stem>`, emit:
 
 - `<stem>.transactions.csv`: portable transaction table.
-- `<stem>.bundle.json`: site import payload containing the manifest,
-  transaction rows, and `unparsed_money_lines[]` page/line/text evidence.
+- `<stem>.bundle.json`: candidate or importable payload containing the manifest,
+  clean statement sections, transaction rows, and unresolved evidence.
 - `<stem>.manifest.json`: human- and machine-readable reconciliation result.
 - `<stem>.audit.json`: page text, source coverage, and unparsed source lines.
+- `<stem>.visual-review.json`: private agent-authored source verification used
+  to turn a candidate extraction into an importable bundle.
 
-Schema version: `1.0.0`.
+Schema version: `1.1.0`.
+
+## Clean statement structure
+
+`bundle.statements[]` contains one object per account/currency section:
+
+```json
+{
+  "account_section_id": "deterministic section ID",
+  "account": {
+    "name": "source account label",
+    "last4": null,
+    "type": "checking",
+    "currency": "USD"
+  },
+  "date_range": {
+    "start": "YYYY-MM-DD",
+    "end": "YYYY-MM-DD",
+    "source_page": 1,
+    "source_line_start": 1,
+    "source_line_end": 1,
+    "raw_text": "verbatim source evidence",
+    "verification_status": "verified"
+  },
+  "starting_balance": {
+    "included": true,
+    "amount": "exact decimal text",
+    "currency": "USD",
+    "source_page": 1,
+    "source_line_start": 1,
+    "source_line_end": 1,
+    "raw_text": "verbatim source evidence",
+    "verification_status": "verified"
+  },
+  "transactions": [],
+  "ending_balance": {
+    "included": true,
+    "amount": "exact decimal text",
+    "currency": "USD",
+    "source_page": 1,
+    "source_line_start": 1,
+    "source_line_end": 1,
+    "raw_text": "verbatim source evidence",
+    "verification_status": "verified"
+  }
+}
+```
+
+When a balance is not present, use `included=false`, `amount=null`, and
+`verification_status=verified_absent`. Absence must be confirmed from the
+rendered source; it is not the same as parser failure. The four source elements
+must never contain tentative records.
 
 ## Transaction fields
 
@@ -58,8 +111,68 @@ difference, and status.
 Validation states:
 
 - `blocked`: extraction coverage or reconciliation failed.
-- `ready_for_review`: lossless extraction and reconciliation passed.
+- `ready_for_review`: exact extraction, complete visual verification, and
+  reconciliation passed; categories may still need review.
 - `ready_for_import`: every row is reviewed or accepted by the user.
+
+## Visual review
+
+Run the parser once without this file to obtain section IDs, transaction counts,
+warnings, and page evidence. After visually inspecting every rendered page,
+create the private review record:
+
+```json
+{
+  "source_sha256": "full source hash",
+  "reviewer": "Codex",
+  "reviewed_at": "ISO-8601 timestamp",
+  "reviewed_pages": [1],
+  "all_money_lines_classified": true,
+  "resolved_warnings": [],
+  "sections": [
+    {
+      "account_section_id": "section ID from the candidate manifest",
+      "date_range": {
+        "start": "YYYY-MM-DD",
+        "end": "YYYY-MM-DD",
+        "source_page": 1,
+        "source_line_start": 1,
+        "source_line_end": 1,
+        "raw_text": "verbatim source evidence",
+        "verified": true
+      },
+      "starting_balance": {
+        "included": false,
+        "amount": null,
+        "source_page": null,
+        "source_line_start": null,
+        "source_line_end": null,
+        "raw_text": null,
+        "verified": true
+      },
+      "transactions_verified": true,
+      "transaction_count": 0,
+      "verified_transaction_ids": [],
+      "ending_balance": {
+        "included": false,
+        "amount": null,
+        "source_page": null,
+        "source_line_start": null,
+        "source_line_end": null,
+        "raw_text": null,
+        "verified": true
+      }
+    }
+  ]
+}
+```
+
+List every rendered PDF page explicitly. `resolved_warnings` must contain every
+parser warning verbatim after visual resolution. List every verified transaction
+ID explicitly in its statement section; a count alone is not evidence of
+transaction-by-transaction review. A visual assertion cannot override an
+unparsed money line, a reconciliation failure, a missing date range, or a
+disagreement with the parsed balances or transactions.
 
 ## Audit
 
@@ -70,11 +183,12 @@ Store:
 - `ignored_money_lines[]`: known summaries/headings with an explicit reason.
 - parser warnings and visual-review notes.
 
-An unfamiliar money line is never ignored automatically.
+An unfamiliar money line is never imported, ignored, or left tentative
+automatically. Inspect it visually and either parse it as a complete transaction
+or classify it definitively as a non-transaction source element.
 
-The bundle repeats `unparsed_money_lines[]` so the private statement-review UI
-can expose every unresolved source line without needing access to the local
-audit file. The manifest count must equal the bundled evidence length.
+Candidate bundles repeat `unparsed_money_lines[]` for diagnosis. Importable
+bundles require an empty array, and the manifest count must match it.
 
 ## Reconciliation
 

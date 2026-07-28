@@ -141,8 +141,13 @@ export async function importFinanceBundle(
       "This workbook migration is obsolete. Convert it to canonical transactions first.",
     );
   }
-  if (payload.schema_version === "1.0.0" && payload.manifest) {
+  if (payload.schema_version === "1.1.0" && payload.manifest) {
     return importStatementBundle(current, payload);
+  }
+  if (payload.schema_version === "1.0.0" && payload.manifest) {
+    throw new Error(
+      "This statement bundle predates visual completeness verification. Re-run the statement import skill.",
+    );
   }
   throw new Error("Unsupported import bundle");
 }
@@ -324,14 +329,255 @@ async function importStatementBundle(
     payload.unparsed_money_lines,
     "unparsed_money_lines",
   );
+  const cleanStatements = list(payload.statements, "statements");
   const sections = list(manifest.sections ?? [], "manifest.sections");
+  const statementId = required(manifest.statement_id, "manifest.statement_id");
+  const sourceSha = required(manifest.source_sha256, "manifest.source_sha256");
   const declaredCount = integer(manifest.transaction_count, -1);
   if (declaredCount !== sourceTransactions.length) {
     throw new Error("Manifest transaction count does not match bundle rows");
   }
+  if (
+    manifest.validation_state !== "ready_for_review" &&
+    manifest.validation_state !== "ready_for_import"
+  ) {
+    throw new Error("The statement has not passed extraction verification");
+  }
+  if (
+    integer(manifest.unparsed_money_line_count) !== 0 ||
+    sourceUnparsedLines.length !== 0
+  ) {
+    throw new Error("Every money-bearing source line must be classified first");
+  }
+  const visualReview = record(manifest.visual_review, "manifest.visual_review");
+  if (visualReview.all_money_lines_classified !== true) {
+    throw new Error("The statement has not passed complete visual review");
+  }
+  required(visualReview.reviewer, "manifest.visual_review.reviewer");
+  required(visualReview.reviewed_at, "manifest.visual_review.reviewed_at");
+  if (
+    required(
+      visualReview.source_sha256,
+      "manifest.visual_review.source_sha256",
+    ) !== sourceSha
+  ) {
+    throw new Error("The visual review does not match the statement source");
+  }
+  const expectedPages = Array.from(
+    { length: integer(manifest.page_count, -1) },
+    (_, index) => index + 1,
+  );
+  const reviewedPages = Array.isArray(visualReview.reviewed_pages)
+    ? visualReview.reviewed_pages
+        .map((page) => integer(page, -1))
+        .sort((left, right) => left - right)
+    : [];
+  if (
+    expectedPages.length === 0 ||
+    reviewedPages.length !== expectedPages.length ||
+    reviewedPages.some((page, index) => page !== expectedPages[index])
+  ) {
+    throw new Error("The visual review must explicitly cover every source page");
+  }
+  const parserWarnings = Array.isArray(manifest.warnings)
+    ? manifest.warnings.map(String).sort()
+    : [];
+  const resolvedWarnings = Array.isArray(visualReview.resolved_warnings)
+    ? visualReview.resolved_warnings.map(String).sort()
+    : [];
+  if (
+    parserWarnings.length !== resolvedWarnings.length ||
+    parserWarnings.some(
+      (warning, index) => warning !== resolvedWarnings[index],
+    )
+  ) {
+    throw new Error("Every parser warning must be explicitly resolved");
+  }
+  const visualReviewErrors = Array.isArray(manifest.visual_review_errors)
+    ? manifest.visual_review_errors
+    : [];
+  if (visualReviewErrors.length > 0) {
+    throw new Error("The statement still has visual verification errors");
+  }
+  const visualSections = list(
+    visualReview.sections,
+    "manifest.visual_review.sections",
+  );
+  if (visualSections.length !== sections.length) {
+    throw new Error("Every statement section must have one visual review");
+  }
+  for (const section of sections) {
+    const sectionId = required(
+      section.account_section_id,
+      "section.account_section_id",
+    );
+    const visualSection = visualSections.find(
+      (item) => item.account_section_id === sectionId,
+    );
+    if (!visualSection || visualSection.transactions_verified !== true) {
+      throw new Error("Every statement transaction must be visually verified");
+    }
+    const visualDateRange = record(
+      visualSection.date_range,
+      `visual review ${sectionId} date_range`,
+    );
+    if (
+      visualDateRange.verified !== true ||
+      optional(visualDateRange.start) !== optional(section.period_start) ||
+      optional(visualDateRange.end) !== optional(section.period_end) ||
+      !optional(visualDateRange.raw_text)
+    ) {
+      throw new Error("The visual date range must match the statement section");
+    }
+    for (const [reviewField, manifestField] of [
+      ["starting_balance", "opening_balance"],
+      ["ending_balance", "closing_balance"],
+    ] as const) {
+      const visualBalance = record(
+        visualSection[reviewField],
+        `visual review ${sectionId} ${reviewField}`,
+      );
+      const manifestAmount = optional(section[manifestField]);
+      if (
+        visualBalance.verified !== true ||
+        visualBalance.included !== (manifestAmount !== null) ||
+        (manifestAmount !== null &&
+          (optional(visualBalance.amount) !== manifestAmount ||
+            !optional(visualBalance.raw_text)))
+      ) {
+        throw new Error(
+          `The visual ${reviewField} must match the statement section`,
+        );
+      }
+    }
+    const actualTransactionIds = sourceTransactions
+      .filter((item) => item.account_section_id === sectionId)
+      .map((item) =>
+        required(item.transaction_id, "transaction.transaction_id"),
+      )
+      .sort();
+    const verifiedTransactionIds = Array.isArray(
+      visualSection.verified_transaction_ids,
+    )
+      ? visualSection.verified_transaction_ids.map(String).sort()
+      : [];
+    if (
+      integer(visualSection.transaction_count, -1) !==
+        actualTransactionIds.length ||
+      verifiedTransactionIds.length !== actualTransactionIds.length ||
+      verifiedTransactionIds.some(
+        (id, index) => id !== actualTransactionIds[index],
+      )
+    ) {
+      throw new Error(
+        "The visual review must identify every verified transaction",
+      );
+    }
+  }
+  if (cleanStatements.length !== sections.length) {
+    throw new Error("Clean statement sections do not match the manifest");
+  }
+  const cleanSectionIds = new Set<string>();
+  const cleanTransactionIds = cleanStatements.flatMap((item, index) => {
+    const sectionId = required(
+      item.account_section_id,
+      `statements[${index}].account_section_id`,
+    );
+    if (cleanSectionIds.has(sectionId)) {
+      throw new Error("Clean statement section IDs must be unique");
+    }
+    cleanSectionIds.add(sectionId);
+    const manifestSection = sections.find(
+      (section) => section.account_section_id === sectionId,
+    );
+    if (!manifestSection) {
+      throw new Error("A clean statement section is missing from the manifest");
+    }
+    const dateRange = record(
+      item.date_range,
+      `statements[${index}].date_range`,
+    );
+    if (
+      dateRange.verification_status !== "verified" ||
+      !optional(dateRange.start) ||
+      !optional(dateRange.end) ||
+      !optional(dateRange.raw_text) ||
+      optional(dateRange.start) !== optional(manifestSection.period_start) ||
+      optional(dateRange.end) !== optional(manifestSection.period_end)
+    ) {
+      throw new Error("Every statement date range must be visually verified");
+    }
+    for (const [field, manifestField] of [
+      ["starting_balance", "opening_balance"],
+      ["ending_balance", "closing_balance"],
+    ] as const) {
+      const balance = record(
+        item[field],
+        `statements[${index}].${field}`,
+      );
+      if (typeof balance.included !== "boolean") {
+        throw new Error(`Every statement ${field} needs an exact presence flag`);
+      }
+      const expectedStatus =
+        balance.included === true ? "verified" : "verified_absent";
+      if (balance.verification_status !== expectedStatus) {
+        throw new Error(`Every statement ${field} must be visually verified`);
+      }
+      if (
+        balance.included === true &&
+        (!optional(balance.amount) || !optional(balance.raw_text))
+      ) {
+        throw new Error(`Every included ${field} must retain source evidence`);
+      }
+      if (balance.included === false && balance.amount != null) {
+        throw new Error(`Every absent ${field} must have a null amount`);
+      }
+      const manifestAmount = optional(manifestSection[manifestField]);
+      if (
+        balance.included !== (manifestAmount !== null) ||
+        (manifestAmount !== null &&
+          optional(balance.amount) !== manifestAmount)
+      ) {
+        throw new Error(`Clean statement ${field} disagrees with the manifest`);
+      }
+    }
+    const statementTransactionIds = list(
+      item.transactions,
+      `statements[${index}].transactions`,
+    ).map((transaction) =>
+      required(transaction.transaction_id, "clean transaction.transaction_id"),
+    );
+    const sectionTransactionIds = sourceTransactions
+      .filter((transaction) => transaction.account_section_id === sectionId)
+      .map((transaction) =>
+        required(transaction.transaction_id, "transaction.transaction_id"),
+      )
+      .sort();
+    const sortedStatementTransactionIds = [...statementTransactionIds].sort();
+    if (
+      sortedStatementTransactionIds.length !== sectionTransactionIds.length ||
+      sortedStatementTransactionIds.some(
+        (id, transactionIndex) => id !== sectionTransactionIds[transactionIndex],
+      )
+    ) {
+      throw new Error("Clean transactions must stay in their statement section");
+    }
+    return statementTransactionIds;
+  });
+  const sourceTransactionIds = sourceTransactions.map((item) =>
+    required(item.transaction_id, "transaction.transaction_id"),
+  );
+  const sortedCleanTransactionIds = [...cleanTransactionIds].sort();
+  const sortedSourceTransactionIds = [...sourceTransactionIds].sort();
+  if (
+    sortedCleanTransactionIds.length !== sortedSourceTransactionIds.length ||
+    sortedCleanTransactionIds.some(
+      (id, index) => id !== sortedSourceTransactionIds[index],
+    )
+  ) {
+    throw new Error("Clean statement transactions do not match bundle rows");
+  }
 
-  const statementId = required(manifest.statement_id, "manifest.statement_id");
-  const sourceSha = required(manifest.source_sha256, "manifest.source_sha256");
   const now = new Date().toISOString();
   const accountSources = new Map<string, UnknownRecord>();
   for (const item of sections) {
