@@ -11,6 +11,7 @@ import { getCellBreakdown } from "./cell-breakdown.mjs";
 import {
   accountEntryMode,
   FORMULA_CATEGORY_LABELS,
+  SOURCE_BALANCE_CATEGORY_LABELS,
   transactionMonth,
 } from "./derive-ledger.mjs";
 import { deriveFinanceView, type ManualTransactionInput } from "./ledger";
@@ -474,7 +475,7 @@ export function FinanceApp({
             <article className="panel ledger-panel">
               <PanelHead
                 title={monthLabel(activeMonth)}
-                meta={`${activeAccounts.length} accounts · ${cellRows.length} derived cells`}
+                meta={`${activeAccounts.length} accounts · ${cellRows.length} ledger cells`}
               />
               <div className="ledger-scroll">
                 <table className="ledger-table">
@@ -502,6 +503,8 @@ export function FinanceApp({
                         const isFormula = FORMULA_CATEGORY_LABELS.has(
                           category.label,
                         );
+                        const isSourceBalance =
+                          SOURCE_BALANCE_CATEGORY_LABELS.has(category.label);
                         return (
                           <tr
                             key={category.id}
@@ -509,7 +512,11 @@ export function FinanceApp({
                           >
                             <th>
                               {category.label}
-                              {isFormula ? <small>Derived</small> : null}
+                              {isSourceBalance ? (
+                                <small>Source balance</small>
+                              ) : isFormula ? (
+                                <small>Derived</small>
+                              ) : null}
                             </th>
                             {activeAccounts.map((account) => {
                               const row = cellRows.find(

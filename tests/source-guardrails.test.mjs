@@ -5,6 +5,7 @@ import { getCellBreakdown } from "../app/cell-breakdown.mjs";
 import {
   accountEntryMode,
   deriveLedgerData,
+  SOURCE_BALANCE_CATEGORY_LABELS,
 } from "../app/derive-ledger.mjs";
 import {
   createManualTransaction,
@@ -403,6 +404,10 @@ test("distinguishes manual transactions and unresolved source gaps", () => {
 });
 
 test("derives monthly cells and balance formulas from transactions and snapshots", () => {
+  assert.equal(
+    SOURCE_BALANCE_CATEGORY_LABELS.has("ACTUAL ENDING BALANCE"),
+    true,
+  );
   const data = deriveLedgerData({
     accounts: [
       {
@@ -448,6 +453,9 @@ test("derives monthly cells and balance formulas from transactions and snapshots
         balance_text: "100",
         currency: "USD",
         balance_kind: "opening",
+        source_kind: "statement",
+        source_ref: "May statement closing balance",
+        verification_status: "pass",
       },
       {
         id: "closing",
@@ -456,6 +464,9 @@ test("derives monthly cells and balance formulas from transactions and snapshots
         balance_text: "65",
         currency: "USD",
         balance_kind: "closing",
+        source_kind: "statement",
+        source_ref: "June statement closing balance",
+        verification_status: "pass",
       },
     ],
     prices: [],
@@ -484,6 +495,25 @@ test("derives monthly cells and balance formulas from transactions and snapshots
   assert.equal(value("ENDING BALANCE"), 65);
   assert.equal(value("ACTUAL ENDING BALANCE"), 65);
   assert.equal(value("ERROR"), 0);
+  const actualStarting = cells.find(
+    (item) => item.label === "ACTUAL STARTING BALANCE",
+  );
+  const calculatedEnding = cells.find(
+    (item) => item.label === "ENDING BALANCE",
+  );
+  const actualEnding = cells.find(
+    (item) => item.label === "ACTUAL ENDING BALANCE",
+  );
+  assert.equal(actualStarting?.source_ref, "May statement closing balance");
+  assert.equal(actualStarting?.verification_status, "pass");
+  assert.equal(actualStarting?.formula, null);
+  assert.match(actualStarting?.id ?? "", /^source:balance:/);
+  assert.equal(calculatedEnding?.source_ref, "derived formula");
+  assert.equal(calculatedEnding?.verification_status, "derived");
+  assert.equal(actualEnding?.source_ref, "June statement closing balance");
+  assert.equal(actualEnding?.verification_status, "pass");
+  assert.equal(actualEnding?.formula, null);
+  assert.match(actualEnding?.id ?? "", /^source:balance:/);
   assert.equal(data.aggregates.some((item) => item.id === "obsolete"), false);
 });
 

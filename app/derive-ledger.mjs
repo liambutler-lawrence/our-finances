@@ -35,6 +35,11 @@ export const FORMULA_CATEGORY_LABELS = new Set(
   FORMULA_DEFINITIONS.map((item) => item.label),
 );
 
+export const SOURCE_BALANCE_CATEGORY_LABELS = new Set([
+  "ACTUAL STARTING BALANCE",
+  "ACTUAL ENDING BALANCE",
+]);
+
 export function accountEntryMode(account) {
   if (account?.entry_mode === "manual" || account?.entry_mode === "statement") {
     return account.entry_mode;
@@ -168,6 +173,7 @@ export function deriveLedgerData(source) {
         label: "ACTUAL STARTING BALANCE",
         amount: starting,
         formula: "Latest balance snapshot before this month",
+        sourceBalance: startingSnapshot ?? null,
       },
       {
         label: "TOTAL CHANGE",
@@ -186,6 +192,7 @@ export function deriveLedgerData(source) {
               label: "ACTUAL ENDING BALANCE",
               amount: actualEnding,
               formula: "Latest balance snapshot in this month",
+              sourceBalance: actualEndingSnapshot,
             },
             {
               label: "ERROR",
@@ -198,6 +205,7 @@ export function deriveLedgerData(source) {
     for (const formulaRow of formulaRows) {
       const definition = formulaByLabel.get(formulaRow.label);
       if (!definition?.category) continue;
+      const sourceBalance = formulaRow.sourceBalance ?? null;
       const converted = convertAmount(
         formulaRow.amount,
         account.currency,
@@ -205,11 +213,13 @@ export function deriveLedgerData(source) {
       );
       const key = `${month}:${definition.category.id}:${account.id}`;
       cells.set(key, {
-        id: `derived:formula:${definition.kind}:${month}:${account.id}`,
+        id: sourceBalance
+          ? `source:balance:${definition.kind}:${month}:${account.id}:${sourceBalance.id}`
+          : `derived:formula:${definition.kind}:${month}:${account.id}`,
         month,
         kind: "cell",
         formula_kind: definition.kind,
-        formula: formulaRow.formula,
+        formula: sourceBalance ? null : formulaRow.formula,
         account_id: account.id,
         category_id: definition.category.id,
         label: definition.label,
@@ -217,10 +227,10 @@ export function deriveLedgerData(source) {
         currency: account.currency,
         amount_mxn_text: decimalText(converted.mxn),
         amount_usd_text: decimalText(converted.usd),
-        source_ref: "derived formula",
-        verification_status: hasSourceGap
-          ? "derived_with_source_gaps"
-          : "derived",
+        source_ref: sourceBalance?.source_ref ?? "derived formula",
+        verification_status:
+          sourceBalance?.verification_status ??
+          (hasSourceGap ? "derived_with_source_gaps" : "derived"),
       });
     }
   }
