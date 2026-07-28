@@ -7,7 +7,10 @@ import type {
   FinanceData,
   TransactionRow,
 } from "./finance-data";
-import { ledgerAccountName } from "./account-display.mjs";
+import {
+  ledgerAccountName,
+  ledgerAccountOwner,
+} from "./account-display.mjs";
 import { getCellBreakdown } from "./cell-breakdown.mjs";
 import {
   accountEntryMode,
@@ -483,12 +486,19 @@ export function FinanceApp({
                   <thead>
                     <tr>
                       <th>Category</th>
-                      {activeAccounts.map((account) => (
-                        <th key={account.id}>
-                          <span>{ledgerAccountName(account)}</span>
-                          <small>{account.currency}</small>
-                        </th>
-                      ))}
+                      {activeAccounts.map((account) => {
+                        const owner = ledgerAccountOwner(account);
+                        return (
+                          <th key={account.id}>
+                            <span>{ledgerAccountName(account)}</span>
+                            <small>
+                              {[owner, account.currency]
+                                .filter(Boolean)
+                                .join(" · ")}
+                            </small>
+                          </th>
+                        );
+                      })}
                       <th>Total {currency}</th>
                     </tr>
                   </thead>

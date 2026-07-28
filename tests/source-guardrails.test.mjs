@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
-import { ledgerAccountName } from "../app/account-display.mjs";
+import {
+  ledgerAccountName,
+  ledgerAccountOwner,
+} from "../app/account-display.mjs";
 import { getCellBreakdown } from "../app/cell-breakdown.mjs";
 import {
   accountEntryMode,
@@ -34,11 +37,25 @@ test("keeps account identity suffixes out of ledger display names", () => {
     "Everyday account",
   );
   assert.equal(
+    ledgerAccountOwner({
+      label: "Everyday account @owner USD",
+      currency: "USD",
+    }),
+    "@owner",
+  );
+  assert.equal(
     ledgerAccountName({
       label: "Travel · @partner · EUR",
       currency: "EUR",
     }),
     "Travel",
+  );
+  assert.equal(
+    ledgerAccountOwner({
+      label: "Travel · @partner · EUR",
+      currency: "EUR",
+    }),
+    "@partner",
   );
   assert.equal(
     ledgerAccountName({
@@ -53,6 +70,14 @@ test("keeps account identity suffixes out of ledger display names", () => {
       currency: "USD",
     }),
     "USD savings account",
+  );
+  assert.equal(
+    ledgerAccountOwner({
+      label: "USD savings account",
+      currency: "USD",
+      owner_label: "Household",
+    }),
+    "Household",
   );
 });
 
