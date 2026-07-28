@@ -1561,6 +1561,36 @@ input:focus-visible {
   gap: 8px;
 }
 
+.private-export-text {
+  display: grid;
+  gap: 7px;
+  margin-top: 16px;
+}
+
+.private-export-text label {
+  color: #315b43;
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.private-export-text p {
+  margin: 0;
+  color: #7c6751;
+  font-size: 10px;
+  line-height: 1.45;
+}
+
+.private-export-text textarea {
+  width: 100%;
+  min-height: 140px;
+  resize: vertical;
+  border: 1px solid #d6ddd7;
+  border-radius: 8px;
+  background: #f8faf7;
+  color: #405047;
+  font: 9px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
 .import-status {
   margin: 12px 0 0 !important;
   color: #477259 !important;

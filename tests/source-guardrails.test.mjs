@@ -81,13 +81,16 @@ test("keeps the private import input mounted for an empty ledger", async () => {
 });
 
 test("exports both the complete ledger and lossless transaction CSV", async () => {
-  const [shell, ledger] = await Promise.all([
+  const [shell, app, ledger] = await Promise.all([
     source("app/CloudKitFinance.tsx"),
+    source("app/FinanceApp.tsx"),
     source("app/ledger.ts"),
   ]);
   assert.match(shell, /our-finances-ledger\.json/);
   assert.match(shell, /JSON\.stringify\(ledgerRef\.current\?\.data/);
   assert.match(shell, /our-finances-transactions\.csv/);
+  assert.match(app, /aria-label="Full private ledger JSON"/);
+  assert.match(app, /value=\{onReadLedger\(\)\}/);
   assert.match(ledger, /raw_text/);
   assert.match(ledger, /source_line_start/);
 });

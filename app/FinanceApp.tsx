@@ -74,6 +74,7 @@ export function FinanceApp({
   onExportTransactions,
   onExportLedger,
   onCopyLedger,
+  onReadLedger,
 }: {
   data: FinanceData;
   user: { displayName: string; role: string };
@@ -93,6 +94,7 @@ export function FinanceApp({
   onExportTransactions: () => void;
   onExportLedger: () => void;
   onCopyLedger: () => Promise<void>;
+  onReadLedger: () => string;
 }) {
   const data = useMemo(() => deriveFinanceView(storedData), [storedData]);
   const [tab, setTab] = useState<Tab>("overview");
@@ -105,6 +107,7 @@ export function FinanceApp({
   );
   const [importStatus, setImportStatus] = useState<string>("");
   const [copyStatus, setCopyStatus] = useState<string>("");
+  const [showPrivateExport, setShowPrivateExport] = useState(false);
   const [isImporting, setIsImporting] = useState(false);
   const [inspectedCell, setInspectedCell] =
     useState<LedgerCellInspection | null>(null);
@@ -846,8 +849,36 @@ export function FinanceApp({
                   >
                     Copy full ledger JSON
                   </button>
+                  <button
+                    className="secondary-button"
+                    type="button"
+                    aria-expanded={showPrivateExport}
+                    onClick={() => setShowPrivateExport((current) => !current)}
+                  >
+                    {showPrivateExport
+                      ? "Hide private export text"
+                      : "Show private export text"}
+                  </button>
                 </div>
                 {copyStatus ? <p className="import-status">{copyStatus}</p> : null}
+                {showPrivateExport ? (
+                  <div className="private-export-text">
+                    <label htmlFor="private-ledger-export">
+                      Full private ledger JSON
+                    </label>
+                    <p>
+                      This contains your complete financial ledger. Only copy or
+                      save it somewhere you trust.
+                    </p>
+                    <textarea
+                      id="private-ledger-export"
+                      aria-label="Full private ledger JSON"
+                      readOnly
+                      spellCheck={false}
+                      value={onReadLedger()}
+                    />
+                  </div>
+                ) : null}
               </article>
             </div>
 

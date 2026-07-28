@@ -203,6 +203,10 @@ export function CloudKitFinance() {
     );
   }
 
+  function readLedger() {
+    return JSON.stringify(ledgerRef.current?.data ?? emptyFinanceData);
+  }
+
   if (identity === undefined) {
     return (
       <AuthCard
@@ -253,6 +257,7 @@ export function CloudKitFinance() {
         onExportTransactions={exportCsv}
         onExportLedger={exportLedger}
         onCopyLedger={copyLedger}
+        onReadLedger={readLedger}
       />
     </>
   );
