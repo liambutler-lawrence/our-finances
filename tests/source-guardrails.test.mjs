@@ -7,6 +7,7 @@ import {
 } from "../app/account-display.mjs";
 import { getCellBreakdown } from "../app/cell-breakdown.mjs";
 import {
+  accountAllowsManualEntry,
   accountEntryMode,
   deriveLedgerData,
   SOURCE_BALANCE_CATEGORY_LABELS,
@@ -534,6 +535,16 @@ test("derives monthly cells and balance formulas from transactions and snapshots
         currency: "USD",
         source_kind: "statement",
       },
+      {
+        id: "corroborating-evidence",
+        account_id: "account-demo",
+        category_id: "category-demo",
+        transaction_date: "2026-06-06",
+        amount_text: "-999",
+        currency: "USD",
+        source_kind: "statement",
+        ledger_role: "evidence_only",
+      },
     ],
     balances: [
       {
@@ -764,6 +775,13 @@ test("manual account transactions can be added, edited, and deleted", () => {
         currency: "USD",
         entry_mode: "manual",
       },
+      {
+        id: "statement-demo",
+        label: "Statement demo",
+        currency: "USD",
+        entry_mode: "statement",
+        manual_periods: ["2026-07"],
+      },
     ],
     categories: [
       {
@@ -775,6 +793,14 @@ test("manual account transactions can be added, edited, and deleted", () => {
     transactions: [],
   };
   assert.equal(accountEntryMode(base.accounts[0]), "manual");
+  assert.equal(
+    accountAllowsManualEntry(base.accounts[1], "2026-07"),
+    true,
+  );
+  assert.equal(
+    accountAllowsManualEntry(base.accounts[1], "2026-06"),
+    false,
+  );
   const created = createManualTransaction(base, {
     accountId: "cash-demo",
     categoryId: "category-demo",
@@ -800,4 +826,23 @@ test("manual account transactions can be added, edited, and deleted", () => {
     created.transaction.id,
   );
   assert.equal(deleted.transactions.length, 0);
+  const provisional = createManualTransaction(base, {
+    accountId: "statement-demo",
+    categoryId: "category-demo",
+    transactionDate: "2026-07-04",
+    description: "Awaiting statement",
+    amountText: "-5",
+  });
+  assert.equal(provisional.transaction.source_kind, "manual");
+  assert.throws(
+    () =>
+      createManualTransaction(base, {
+        accountId: "statement-demo",
+        categoryId: "category-demo",
+        transactionDate: "2026-06-04",
+        description: "Not a manual period",
+        amountText: "-5",
+      }),
+    /manually managed account/,
+  );
 });

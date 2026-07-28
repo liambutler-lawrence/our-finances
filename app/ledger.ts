@@ -32,6 +32,11 @@ const transactionColumns = [
   "source_amount",
   "currency",
   "source_kind",
+  "ledger_role",
+  "workbook_component_id",
+  "source_unit_id",
+  "source_unit_value",
+  "source_transaction_id",
   "transaction_type",
   "category",
   "category_confidence",
@@ -172,6 +177,9 @@ async function importCanonicalLedger(
         asset_symbol: optional(item.asset_symbol),
         entry_mode:
           item.entry_mode === "manual" ? "manual" : ("statement" as const),
+        manual_periods: Array.isArray(item.manual_periods)
+          ? item.manual_periods.map(String)
+          : [],
         active: bool(item.active),
       }) as AccountRow,
   );
@@ -275,6 +283,10 @@ async function importCanonicalLedger(
             : item.source_kind === "source_gap"
               ? "source_gap"
               : "statement",
+        ledger_role:
+          item.ledger_role === "evidence_only"
+            ? "evidence_only"
+            : "activity",
         source_page: integer(item.source_page) || null,
         source_line_start: integer(item.source_line_start) || null,
         source_line_end: integer(item.source_line_end) || null,
@@ -776,6 +788,9 @@ export function reviewTransaction(
   const reviewedAt = new Date().toISOString();
   const transactions = current.transactions.map((transaction) => {
     if (transaction.id !== transactionId) return transaction;
+    if (transaction.ledger_role === "evidence_only") {
+      throw new Error("Corroborating evidence rows cannot change ledger totals");
+    }
     found = true;
     return {
       ...transaction,
@@ -881,6 +896,11 @@ export function exportTransactionsCsv(data: FinanceData): string {
         source_amount: transaction.source_amount_text,
         currency: transaction.currency,
         source_kind: transaction.source_kind,
+        ledger_role: transaction.ledger_role,
+        workbook_component_id: transaction.workbook_component_id,
+        source_unit_id: transaction.source_unit_id,
+        source_unit_value: transaction.source_unit_value_text,
+        source_transaction_id: transaction.source_transaction_id,
         transaction_type: transaction.transaction_type,
         category: category?.label ?? "",
         category_confidence: transaction.category_confidence,

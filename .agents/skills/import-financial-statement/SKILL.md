@@ -36,7 +36,9 @@ exact, while suggested budget categories may remain editable.
 
 7. Verify every transaction individually, including multiline descriptions,
    dates, posted dates, signs, decimal separators, currencies, fees, running
-   balances, quantities, prices, symbols, IDs, and page/line locators. A
+   balances, quantities, prices, symbols, IDs, and page/line locators. Record
+   each statement-supplied opening/closing asset position as a separate balance
+   control, preserving only the quantity/value fields actually printed. A
    plausible count or sample check is not sufficient.
 8. Resolve every money-bearing line decisively as a transaction, balance,
    statement total, disclosure, rate, holding, or other non-transaction. If a
@@ -80,7 +82,8 @@ Require all of the following:
 - Opening balance + signed activity = closing balance within the currency
   tolerance whenever the statement supplies both balances.
 - Statement-level totals, fees, payments, interest, and holdings reconcile when
-  present.
+  present. Every supplied per-symbol closing position is preserved as a
+  verified balance control rather than inferred from transaction activity.
 - Temporary authorizations, reversals, transfers, credit-card payments, and
   investment buys/sells remain distinct records.
 - The clean `statements[]` structure contains `date_range`,

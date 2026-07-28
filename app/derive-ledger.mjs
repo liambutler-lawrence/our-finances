@@ -58,6 +58,15 @@ export function accountEntryMode(account) {
     : "statement";
 }
 
+export function accountAllowsManualEntry(account, month) {
+  return (
+    accountEntryMode(account) === "manual" ||
+    (typeof month === "string" &&
+      Array.isArray(account?.manual_periods) &&
+      account.manual_periods.includes(month))
+  );
+}
+
 export function transactionMonth(transaction) {
   if (
     typeof transaction?.budget_month === "string" &&
@@ -78,6 +87,7 @@ export function deriveLedgerData(source) {
   const accountById = new Map(accounts.map((item) => [item.id, item]));
   const transactions = (source.transactions ?? []).filter(
     (item) =>
+      item.ledger_role !== "evidence_only" &&
       transactionMonth(item) &&
       item.category_id &&
       categoryById.has(item.category_id) &&

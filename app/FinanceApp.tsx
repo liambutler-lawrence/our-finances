@@ -13,7 +13,7 @@ import {
 } from "./account-display.mjs";
 import { getCellBreakdown } from "./cell-breakdown.mjs";
 import {
-  accountEntryMode,
+  accountAllowsManualEntry,
   FORMULA_CATEGORY_LABELS,
   SOURCE_BALANCE_CATEGORY_LABELS,
   transactionMonth,
@@ -202,7 +202,7 @@ export function FinanceApp({
     (transaction) => transaction.source_kind === "source_gap",
   ).length;
   const manualAccounts = data.accounts.filter(
-    (account) => accountEntryMode(account) === "manual",
+    (account) => accountAllowsManualEntry(account, activeMonth),
   );
 
   const trend = data.months.map((value) => {
@@ -735,6 +735,10 @@ export function FinanceApp({
                               <small className="source-gap-label">
                                 Needs statement matching
                               </small>
+                            ) : transaction.ledger_role === "evidence_only" ? (
+                              <small className="source-confidence">
+                                Corroborating statement evidence · excluded from totals
+                              </small>
                             ) : transaction.match_confidence === "medium" ? (
                               <small className="source-confidence">
                                 Statement match needs verification
@@ -756,6 +760,7 @@ export function FinanceApp({
                           <select
                             aria-label={`Category for ${transaction.description}`}
                             defaultValue={transaction.category_id ?? ""}
+                            disabled={transaction.ledger_role === "evidence_only"}
                             onChange={(event) =>
                               reviewTransaction(transaction, event.target.value)
                             }

@@ -7,6 +7,7 @@ export type AccountRow = {
   currency: string;
   asset_symbol: string | null;
   entry_mode?: "statement" | "manual";
+  manual_periods?: string[];
   active?: boolean;
   created_at?: string | null;
 };
@@ -104,6 +105,11 @@ export type TransactionRow = {
   categorization_source?: string | null;
   review_status: string;
   source_kind?: "statement" | "manual" | "source_gap";
+  ledger_role?: "activity" | "evidence_only";
+  workbook_component_id?: string | null;
+  source_unit_id?: string | null;
+  source_unit_value_text?: string | null;
+  source_transaction_id?: string | null;
   fee_text?: string | null;
   balance_text?: string | null;
   quantity_text?: string | null;
