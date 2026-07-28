@@ -101,6 +101,15 @@ inspection can settle.
 
 - Treat a PDF containing multiple accounts or periods as multiple sections in
   one statement, not as one blended account.
+- Preserve the source's transaction/operation date as `transaction_date` and a
+  distinct charge/posting/application date as `posted_date`. Never substitute a
+  statement folder, nominal month, period end, or posting date for a printed
+  operation date.
+- Calendar-month ledger placement is derived from `transaction_date`, even when
+  one statement period crosses a month boundary. A statement spanning May and
+  June must contribute its May-dated and June-dated transactions to different
+  budget months. Use `posted_date` only when the source genuinely omits an
+  operation date.
 - Preserve the source's sign semantics. For credit cards, charges increase the
   card balance and payments reduce it. For asset accounts, buys reduce cash and
   increase holdings; keep both the cash amount and quantity/price fields.

@@ -100,7 +100,7 @@ not transactions and must not be added to cash activity.
 | `account_last4` | Last four only when available. |
 | `account_type` | `checking`, `savings`, `credit`, `brokerage`, `crypto`, `cash`, or `unknown`. |
 | `period_start`, `period_end` | ISO dates when supplied. |
-| `transaction_date`, `posted_date` | ISO dates; preserve both when distinct. |
+| `transaction_date`, `posted_date` | ISO dates; `transaction_date` is the printed transaction/operation date and governs calendar-month ledger placement. Preserve a distinct posting/application date as `posted_date`; never replace the operation date with the statement period end. |
 | `description` | Source description without categorization edits. |
 | `amount` | Exact signed decimal string in `currency`. |
 | `currency` | ISO currency or asset symbol. |
