@@ -12,7 +12,10 @@ import {
   updateManualTransaction,
 } from "../app/manual-transactions.mjs";
 import { money, signedMoney } from "../app/money.mjs";
-import { statementReviewTransactions } from "../app/statement-review.mjs";
+import {
+  statementReviewStatements,
+  statementReviewTransactions,
+} from "../app/statement-review.mjs";
 
 const root = new URL("../", import.meta.url);
 
@@ -133,6 +136,80 @@ test("filters the statement review queue without exposing manual transactions", 
   assert.deepEqual(
     statementReviewTransactions(transactions, "missing-statement"),
     [],
+  );
+});
+
+test("combines month and statement filters using the ledger budget month", () => {
+  const transactions = [
+    {
+      id: "june-budget",
+      statement_id: "statement-one",
+      source_kind: "statement",
+      budget_month: "2026-06",
+      transaction_date: "2026-05-29",
+    },
+    {
+      id: "july-date",
+      statement_id: "statement-one",
+      source_kind: "statement",
+      transaction_date: "2026-07-03",
+    },
+    {
+      id: "june-gap",
+      statement_id: null,
+      source_kind: "source_gap",
+      budget_month: "2026-06",
+    },
+  ];
+
+  assert.deepEqual(
+    statementReviewTransactions(transactions, null, "2026-06").map(
+      (item) => item.id,
+    ),
+    ["june-budget", "june-gap"],
+  );
+  assert.deepEqual(
+    statementReviewTransactions(
+      transactions,
+      "statement-one",
+      "2026-06",
+    ).map((item) => item.id),
+    ["june-budget"],
+  );
+});
+
+test("shows statements linked to the month or whose period ends in it", () => {
+  const statements = [
+    {
+      id: "linked",
+      period_start: "2026-05-01",
+      period_end: "2026-05-31",
+    },
+    {
+      id: "overlapping",
+      period_start: "2026-05-20",
+      period_end: "2026-06-19",
+    },
+    {
+      id: "july",
+      period_start: "2026-07-01",
+      period_end: "2026-07-31",
+    },
+  ];
+  const transactions = [
+    {
+      id: "linked-june",
+      statement_id: "linked",
+      source_kind: "statement",
+      budget_month: "2026-06",
+    },
+  ];
+
+  assert.deepEqual(
+    statementReviewStatements(statements, transactions, "2026-06").map(
+      (item) => item.id,
+    ),
+    ["linked", "overlapping"],
   );
 });
 

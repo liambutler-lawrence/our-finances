@@ -15,7 +15,10 @@ import {
 } from "./derive-ledger.mjs";
 import { deriveFinanceView, type ManualTransactionInput } from "./ledger";
 import { money, signedMoney } from "./money.mjs";
-import { statementReviewTransactions } from "./statement-review.mjs";
+import {
+  statementReviewStatements,
+  statementReviewTransactions,
+} from "./statement-review.mjs";
 
 type Tab = "overview" | "month" | "review" | "manual" | "data";
 type CellBreakdownItem = ReturnType<typeof getCellBreakdown>[number];
@@ -143,27 +146,36 @@ export function FinanceApp({
       transaction.source_kind !== "manual" &&
       transaction.review_status !== "reviewed",
   ).length;
-  const sourceGapCount = data.transactions.filter(
-    (transaction) => transaction.source_kind === "source_gap",
-  ).length;
-  const statementTransactions = useMemo(
-    () => statementReviewTransactions(data.transactions),
-    [data.transactions],
+  const monthStatementTransactions = useMemo(
+    () => statementReviewTransactions(data.transactions, null, activeMonth),
+    [activeMonth, data.transactions],
+  );
+  const reviewStatements = useMemo(
+    () =>
+      statementReviewStatements(
+        data.statements,
+        data.transactions,
+        activeMonth,
+      ),
+    [activeMonth, data.statements, data.transactions],
   );
   const selectedStatement =
-    data.statements.find((statement) => statement.id === selectedStatementId) ??
+    reviewStatements.find(
+      (statement) => statement.id === selectedStatementId,
+    ) ??
     null;
   const visibleStatementTransactions = useMemo(
     () =>
       statementReviewTransactions(
         data.transactions,
         selectedStatement?.id ?? null,
+        activeMonth,
       ),
-    [data.transactions, selectedStatement?.id],
+    [activeMonth, data.transactions, selectedStatement?.id],
   );
   const statementTransactionCounts = useMemo(() => {
     const counts = new Map<string, number>();
-    for (const transaction of statementTransactions) {
+    for (const transaction of monthStatementTransactions) {
       if (!transaction.statement_id) continue;
       counts.set(
         transaction.statement_id,
@@ -171,7 +183,13 @@ export function FinanceApp({
       );
     }
     return counts;
-  }, [statementTransactions]);
+  }, [monthStatementTransactions]);
+  const monthPendingCount = monthStatementTransactions.filter(
+    (transaction) => transaction.review_status !== "reviewed",
+  ).length;
+  const monthSourceGapCount = monthStatementTransactions.filter(
+    (transaction) => transaction.source_kind === "source_gap",
+  ).length;
   const manualAccounts = data.accounts.filter(
     (account) => accountEntryMode(account) === "manual",
   );
@@ -297,6 +315,7 @@ export function FinanceApp({
                 value={activeMonth}
                 onChange={(event) => {
                   setMonth(event.target.value);
+                  setSelectedStatementId(null);
                   setInspectedCell(null);
                   setSourceItem(null);
                 }}
@@ -566,12 +585,17 @@ export function FinanceApp({
             <div className="review-summary">
               <div>
                 <p className="eyebrow">Review queue</p>
-                <strong>{pendingCount} transactions need a decision</strong>
+                <strong>
+                  {monthPendingCount} transactions need a decision in{" "}
+                  {monthLabel(activeMonth)}
+                </strong>
               </div>
               <span>
-                {sourceGapCount} source gap{sourceGapCount === 1 ? "" : "s"} ·{" "}
-                {data.statements.filter((item) => item.validation_state === "blocked")
-                  .length || 0} blocked statements
+                {monthSourceGapCount} source gap
+                {monthSourceGapCount === 1 ? "" : "s"} ·{" "}
+                {reviewStatements.filter(
+                  (item) => item.validation_state === "blocked",
+                ).length || 0} blocked statements
               </span>
             </div>
             <div className="review-layout">
@@ -590,15 +614,21 @@ export function FinanceApp({
                     <span className="institution-mark">ALL</span>
                     <div>
                       <strong>All statements</strong>
-                      <span>{data.statements.length} imported statements</span>
+                      <span>
+                        {reviewStatements.length} statements in{" "}
+                        {monthLabel(activeMonth)}
+                      </span>
                     </div>
                   </div>
                   <span className="statement-filter-count">
-                    {statementTransactions.length}
+                    {monthStatementTransactions.length}
                   </span>
-                  <small>Includes transactions awaiting statement matching</small>
+                  <small>
+                    Includes this month&apos;s transactions awaiting statement
+                    matching
+                  </small>
                 </button>
-                {data.statements.map((statement) => (
+                {reviewStatements.map((statement) => (
                   <button
                     type="button"
                     className="statement-card"
