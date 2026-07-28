@@ -7,6 +7,7 @@ import type {
   FinanceData,
   TransactionRow,
 } from "./finance-data";
+import { ledgerAccountName } from "./account-display.mjs";
 import { getCellBreakdown } from "./cell-breakdown.mjs";
 import {
   accountEntryMode,
@@ -484,7 +485,7 @@ export function FinanceApp({
                       <th>Category</th>
                       {activeAccounts.map((account) => (
                         <th key={account.id}>
-                          <span>{account.label}</span>
+                          <span>{ledgerAccountName(account)}</span>
                           <small>{account.currency}</small>
                         </th>
                       ))}
@@ -537,7 +538,7 @@ export function FinanceApp({
                                   key: cellKey,
                                   month: activeMonth,
                                   categoryLabel: category.label,
-                                  accountLabel: account.label,
+                                  accountLabel: ledgerAccountName(account),
                                   amount,
                                   currency: account.currency,
                                   items: getCellBreakdown(data, {
@@ -560,7 +561,7 @@ export function FinanceApp({
                                       type="button"
                                       className="ledger-cell-trigger"
                                       aria-expanded={inspectedCell?.key === cellKey}
-                                      aria-label={`Show the amounts contributing to ${category.label} in ${account.label}`}
+                                      aria-label={`Show the amounts contributing to ${category.label} in ${ledgerAccountName(account)}`}
                                       onMouseEnter={inspectCell}
                                       onFocus={inspectCell}
                                       onClick={inspectCell}

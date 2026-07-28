@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
+import { ledgerAccountName } from "../app/account-display.mjs";
 import { getCellBreakdown } from "../app/cell-breakdown.mjs";
 import {
   accountEntryMode,
@@ -23,6 +24,37 @@ const root = new URL("../", import.meta.url);
 async function source(path) {
   return readFile(new URL(path, root), "utf8");
 }
+
+test("keeps account identity suffixes out of ledger display names", () => {
+  assert.equal(
+    ledgerAccountName({
+      label: "Everyday account @owner USD",
+      currency: "USD",
+    }),
+    "Everyday account",
+  );
+  assert.equal(
+    ledgerAccountName({
+      label: "Travel · @partner · EUR",
+      currency: "EUR",
+    }),
+    "Travel",
+  );
+  assert.equal(
+    ledgerAccountName({
+      label: "Wallet @owner $",
+      currency: "$",
+    }),
+    "Wallet",
+  );
+  assert.equal(
+    ledgerAccountName({
+      label: "USD savings account",
+      currency: "USD",
+    }),
+    "USD savings account",
+  );
+});
 
 test("keeps private financial artifacts out of Git", async () => {
   const gitignore = await source(".gitignore");
