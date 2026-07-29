@@ -120,6 +120,8 @@ export function FinanceApp({
   );
   const [importStatus, setImportStatus] = useState<string>("");
   const [copyStatus, setCopyStatus] = useState<string>("");
+  const [showPrivateImport, setShowPrivateImport] = useState(false);
+  const [privateImportText, setPrivateImportText] = useState("");
   const [showPrivateExport, setShowPrivateExport] = useState(false);
   const [isImporting, setIsImporting] = useState(false);
   const [ledgerAssetFilter, setLedgerAssetFilter] = useState(
@@ -274,6 +276,23 @@ export function FinanceApp({
     } finally {
       setIsImporting(false);
       if (fileInput.current) fileInput.current.value = "";
+    }
+  }
+
+  async function importPastedBundle() {
+    setIsImporting(true);
+    setImportStatus("Checking the bundle…");
+    try {
+      const imported = await onImportBundle(JSON.parse(privateImportText));
+      setPrivateImportText("");
+      setShowPrivateImport(false);
+      setImportStatus(
+        `${imported} private records imported to your iCloud. Nothing was added to Git.`,
+      );
+    } catch (error) {
+      setImportStatus(error instanceof Error ? error.message : "Import failed");
+    } finally {
+      setIsImporting(false);
     }
   }
 
@@ -992,14 +1011,55 @@ export function FinanceApp({
                   upload the generated bundle here. Files and values stay out of
                   the public repository.
                 </p>
-                <button
-                  className="primary-button"
-                  type="button"
-                  onClick={() => fileInput.current?.click()}
-                  disabled={isImporting}
-                >
-                  {isImporting ? "Importing…" : "Choose private bundle"}
-                </button>
+                <div className="import-actions">
+                  <button
+                    className="primary-button"
+                    type="button"
+                    onClick={() => fileInput.current?.click()}
+                    disabled={isImporting}
+                  >
+                    {isImporting ? "Importing…" : "Choose private bundle"}
+                  </button>
+                  <button
+                    className="secondary-button"
+                    type="button"
+                    aria-expanded={showPrivateImport}
+                    onClick={() => setShowPrivateImport((current) => !current)}
+                    disabled={isImporting}
+                  >
+                    {showPrivateImport
+                      ? "Hide private bundle text"
+                      : "Paste private bundle JSON"}
+                  </button>
+                </div>
+                {showPrivateImport ? (
+                  <div className="private-import-text">
+                    <label htmlFor="private-ledger-import">
+                      Private bundle JSON
+                    </label>
+                    <p>
+                      Parsed only in this browser, saved to your private iCloud,
+                      and cleared after a successful import.
+                    </p>
+                    <textarea
+                      id="private-ledger-import"
+                      value={privateImportText}
+                      onChange={(event) =>
+                        setPrivateImportText(event.target.value)
+                      }
+                      placeholder="Paste a verified statement bundle or full-ledger migration"
+                      spellCheck={false}
+                    />
+                    <button
+                      className="primary-button"
+                      type="button"
+                      onClick={() => void importPastedBundle()}
+                      disabled={isImporting || !privateImportText.trim()}
+                    >
+                      {isImporting ? "Importing…" : "Import pasted bundle"}
+                    </button>
+                  </div>
+                ) : null}
                 {importStatus ? <p className="import-status">{importStatus}</p> : null}
               </article>
               <article className="panel export-panel">
