@@ -653,6 +653,147 @@ input:focus-visible {
   text-transform: uppercase;
 }
 
+.ledger-filter-bar {
+  display: grid;
+  grid-template-columns: minmax(150px, 1fr) minmax(150px, 0.8fr) minmax(
+      150px,
+      0.8fr
+    ) minmax(210px, 1.1fr) auto;
+  align-items: end;
+  gap: 10px;
+  padding: 13px 14px;
+  border: 1px solid var(--line);
+  border-radius: 11px;
+  background: rgb(255 254 251 / 72%);
+  box-shadow: 0 1px 2px rgb(26 37 30 / 3%);
+}
+
+.ledger-filter-heading {
+  display: flex;
+  min-height: 38px;
+  flex-direction: column;
+  justify-content: center;
+}
+
+.ledger-filter-heading span,
+.ledger-filter-select > span {
+  color: #7c8780;
+  font-size: 8px;
+  font-weight: 760;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+}
+
+.ledger-filter-heading strong {
+  margin-top: 4px;
+  color: #415048;
+  font-size: 10px;
+  font-weight: 650;
+}
+
+.ledger-filter-select {
+  display: grid;
+  gap: 5px;
+}
+
+.ledger-filter-select select {
+  width: 100%;
+  min-height: 38px;
+  padding: 7px 29px 7px 10px;
+  border: 1px solid #d8dfd8;
+  border-radius: 8px;
+  background: var(--paper);
+  color: #3c4d43;
+  font-size: 10px;
+  font-weight: 620;
+}
+
+.ledger-activity-filter {
+  display: grid;
+  min-height: 38px;
+  grid-template-columns: 26px minmax(0, 1fr);
+  align-items: center;
+  gap: 9px;
+  padding: 6px 10px;
+  border: 1px solid #d8dfd8;
+  border-radius: 8px;
+  background: var(--paper);
+  color: #405047;
+  text-align: left;
+  cursor: pointer;
+}
+
+.ledger-activity-filter > span:first-child {
+  position: relative;
+  display: block;
+  width: 26px;
+  height: 16px;
+  border-radius: 99px;
+  background: #d8dfd9;
+  transition: background 140ms ease;
+}
+
+.ledger-activity-filter > span:first-child::after {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 2px rgb(20 38 28 / 20%);
+  content: "";
+  transition: transform 140ms ease;
+}
+
+.ledger-activity-filter.active {
+  border-color: #a8c6b2;
+  background: #f1f8f3;
+  color: #27563e;
+}
+
+.ledger-activity-filter.active > span:first-child {
+  background: #438163;
+}
+
+.ledger-activity-filter.active > span:first-child::after {
+  transform: translateX(10px);
+}
+
+.ledger-activity-filter > span:last-child {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+}
+
+.ledger-activity-filter strong {
+  font-size: 9px;
+}
+
+.ledger-activity-filter small {
+  overflow: hidden;
+  margin-top: 1px;
+  color: #8a948e;
+  font-size: 8px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ledger-filter-reset {
+  min-height: 38px;
+  padding: 7px 10px;
+  border: 0;
+  background: transparent;
+  color: #4f715e;
+  font-size: 9px;
+  font-weight: 720;
+  cursor: pointer;
+}
+
+.ledger-filter-reset:hover {
+  text-decoration: underline;
+}
+
 .ledger-panel {
   padding-right: 0;
   padding-bottom: 0;
@@ -783,6 +924,40 @@ input:focus-visible {
   background: #f1f6f1;
   color: #254f39;
   font-weight: 720;
+}
+
+.ledger-filter-empty {
+  display: grid;
+  min-height: 240px;
+  justify-items: center;
+  place-content: center;
+  padding: 30px 20px 48px;
+  border-top: 1px solid var(--line-soft);
+  color: #657269;
+  text-align: center;
+}
+
+.ledger-filter-empty > span {
+  display: grid;
+  width: 34px;
+  height: 34px;
+  margin-bottom: 11px;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--green-light);
+  color: var(--green);
+}
+
+.ledger-filter-empty strong {
+  color: #35473d;
+  font-size: 12px;
+}
+
+.ledger-filter-empty p {
+  max-width: 410px;
+  margin: 6px 0 14px;
+  font-size: 10px;
+  line-height: 1.5;
 }
 
 .cell-inspector {
@@ -1813,6 +1988,18 @@ input:focus-visible {
   .account-strip {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
+
+  .ledger-filter-bar {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .ledger-filter-heading {
+    grid-column: 1 / -1;
+  }
+
+  .ledger-filter-reset {
+    justify-self: start;
+  }
 }
 
 @media (max-width: 820px) {
@@ -1897,7 +2084,8 @@ input:focus-visible {
   .data-grid,
   .account-strip,
   .statement-list,
-  .manual-balance-metrics {
+  .manual-balance-metrics,
+  .ledger-filter-bar {
     grid-template-columns: 1fr;
   }
 

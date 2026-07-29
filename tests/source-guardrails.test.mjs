@@ -17,6 +17,14 @@ import {
   deleteManualTransaction,
   updateManualTransaction,
 } from "../app/manual-transactions.mjs";
+import {
+  ALL_LEDGER_ASSETS,
+  ALL_LEDGER_OWNERS,
+  filterLedgerAccounts,
+  ledgerColumnFilterOptions,
+  transactionAccountIdsForMonth,
+  UNASSIGNED_LEDGER_OWNER,
+} from "../app/ledger-column-filters.mjs";
 import { money, signedMoney } from "../app/money.mjs";
 import {
   statementReviewStatements,
@@ -218,6 +226,80 @@ test("formats asset-denominated ledger cells without crashing", () => {
   assert.equal(signedMoney(-1.25, "AVAX"), "−1.25 AVAX");
   assert.equal(money(0.00000001, "BTC"), "0.00000001 BTC");
   assert.match(money(12.5, "USD"), /\$12\.50/);
+});
+
+test("filters monthly ledger account columns without filtering cell contents", () => {
+  const accounts = [
+    {
+      id: "liam-usd",
+      label: "Card @Liam USD",
+      currency: "USD",
+      asset_symbol: null,
+    },
+    {
+      id: "mar-btc",
+      label: "Wallet @Mar BTC",
+      currency: "BTC",
+      asset_symbol: "BTC",
+    },
+    {
+      id: "shared-usd",
+      label: "Cash USD",
+      currency: "USD",
+      asset_symbol: null,
+    },
+  ];
+  const transactions = [
+    {
+      id: "liam-june",
+      account_id: "liam-usd",
+      budget_month: "2026-06",
+    },
+    {
+      id: "mar-evidence",
+      account_id: "mar-btc",
+      budget_month: "2026-06",
+      ledger_role: "evidence_only",
+    },
+    {
+      id: "mar-july",
+      account_id: "mar-btc",
+      transaction_date: "2026-07-02",
+    },
+  ];
+  const juneAccountIds = transactionAccountIdsForMonth(
+    transactions,
+    "2026-06",
+  );
+  const options = ledgerColumnFilterOptions(accounts);
+
+  assert.deepEqual(options.assets, ["BTC", "USD"]);
+  assert.deepEqual(options.owners, ["@Liam", "@Mar"]);
+  assert.equal(options.hasUnassignedOwner, true);
+  assert.deepEqual(
+    filterLedgerAccounts(accounts, {
+      asset: "USD",
+      owner: ALL_LEDGER_OWNERS,
+      transactionAccountIds: juneAccountIds,
+    }).map((account) => account.id),
+    ["liam-usd", "shared-usd"],
+  );
+  assert.deepEqual(
+    filterLedgerAccounts(accounts, {
+      asset: ALL_LEDGER_ASSETS,
+      owner: "@Liam",
+      transactionsOnly: true,
+      transactionAccountIds: juneAccountIds,
+    }).map((account) => account.id),
+    ["liam-usd"],
+  );
+  assert.deepEqual(
+    filterLedgerAccounts(accounts, {
+      owner: UNASSIGNED_LEDGER_OWNER,
+      transactionAccountIds: juneAccountIds,
+    }).map((account) => account.id),
+    ["shared-usd"],
+  );
 });
 
 test("filters the statement review queue without exposing manual transactions", () => {
