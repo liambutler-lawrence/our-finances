@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 SCHEMA_VERSION = "1.1.0"
-PARSER_VERSION = "1.5.0"
+PARSER_VERSION = "1.6.0"
 MONEY_RE = re.compile(
     r"(?<![\w])(?:"
     r"[+-]?\s*[$€£]\s*\(?\d[\d.,]*\)?"
@@ -3758,6 +3758,22 @@ def parse_csv_source(
     path: Path, statement_id: str
 ) -> tuple[str, list[Section], list[dict[str, Any]], dict[str, Any]]:
     source_text = path.read_text(encoding="utf-8-sig")
+    first_row = next(csv.reader(io.StringIO(source_text)), [])
+    if set(
+        [
+            "Transaction ID",
+            "Date",
+            "Transaction Type",
+            "Currency",
+            "Amount",
+            "Fee",
+            "Net Amount",
+            "Asset Type",
+            "Asset Price",
+            "Asset Amount",
+        ]
+    ).issubset(first_row):
+        return parse_cash_app_bitcoin_csv(path, statement_id, source_text)
     if (
         "Account Statement - (@" in source_text
         and "Amount (total)" in source_text
@@ -3860,6 +3876,179 @@ def parse_csv_source(
         "visual_review_notes": ["Verify the source CSV column mapping."],
     }
     return "CSV", [section], transactions, audit
+
+
+def parse_cash_app_bitcoin_csv(
+    path: Path,
+    statement_id: str,
+    source_text: str,
+) -> tuple[str, list[Section], list[dict[str, Any]], dict[str, Any]]:
+    rows = list(csv.DictReader(io.StringIO(source_text)))
+    if not rows:
+        raise ValueError("Cash App Bitcoin CSV contains no transactions")
+
+    type_map = {
+        "bitcoin sale": "sell",
+        "bitcoin buy": "buy",
+        "bitcoin deposit": "transfer",
+        "bitcoin lightning deposit": "transfer",
+        "bitcoin received p2p": "transfer",
+        "bitcoin withdrawal": "crypto_send",
+        "bitcoin lightning withdrawal": "crypto_send",
+        "bitcoin sent p2p": "crypto_send",
+    }
+    parsed_rows: list[dict[str, Any]] = []
+    transaction_dates: list[date] = []
+    seen_ids: set[str] = set()
+    for source_line, row in enumerate(rows, 2):
+        external_id = (row.get("Transaction ID") or "").strip()
+        if not external_id:
+            raise ValueError(
+                f"Cash App Bitcoin CSV row {source_line} has no transaction ID"
+            )
+        if external_id in seen_ids:
+            raise ValueError(
+                f"Cash App Bitcoin CSV repeats transaction ID {external_id!r}"
+            )
+        seen_ids.add(external_id)
+
+        date_text = (row.get("Date") or "").strip()
+        date_match = ISO_DATE_RE.search(date_text)
+        if not date_match:
+            raise ValueError(
+                f"Cash App Bitcoin transaction {external_id} has no valid date"
+            )
+        transaction_date = date(
+            int(date_match.group(1)),
+            int(date_match.group(2)),
+            int(date_match.group(3)),
+        )
+        transaction_dates.append(transaction_date)
+
+        source_type = (row.get("Transaction Type") or "").strip()
+        transaction_type = type_map.get(source_type.lower())
+        if transaction_type is None:
+            raise ValueError(
+                f"Cash App Bitcoin transaction {external_id} has unsupported "
+                f"type {source_type!r}"
+            )
+
+        currency = (row.get("Currency") or "").strip().upper()
+        symbol = (row.get("Asset Type") or "").strip().upper()
+        if currency != "USD" or symbol != "BTC":
+            raise ValueError(
+                f"Cash App Bitcoin transaction {external_id} has unexpected "
+                f"currency/asset {currency!r}/{symbol!r}"
+            )
+
+        gross_amount = parse_decimal(row.get("Amount"))
+        fee = parse_decimal(row.get("Fee"))
+        net_amount = parse_decimal(row.get("Net Amount"))
+        unit_price = parse_decimal(row.get("Asset Price"))
+        asset_amount_text = (row.get("Asset Amount") or "").strip()
+        quantity = parse_decimal(
+            re.sub(r"\s+[A-Za-z][A-Za-z0-9.]*\s*$", "", asset_amount_text)
+        )
+        if any(
+            value is None
+            for value in (gross_amount, fee, net_amount, unit_price, quantity)
+        ):
+            raise ValueError(
+                f"Cash App Bitcoin transaction {external_id} has an "
+                "incomplete amount, fee, price, or quantity"
+            )
+        if not asset_amount_text.upper().endswith(" BTC"):
+            raise ValueError(
+                f"Cash App Bitcoin transaction {external_id} has an "
+                f"unexpected asset amount {asset_amount_text!r}"
+            )
+        if gross_amount + fee != net_amount:
+            raise ValueError(
+                f"Cash App Bitcoin transaction {external_id} does not satisfy "
+                "gross amount + fee = net amount"
+            )
+        if quantity <= 0 or unit_price <= 0:
+            raise ValueError(
+                f"Cash App Bitcoin transaction {external_id} has a "
+                "non-positive quantity or unit price"
+            )
+        parsed_rows.append(
+            {
+                "source_line": source_line,
+                "row": row,
+                "external_id": external_id,
+                "transaction_date": transaction_date,
+                "source_type": source_type,
+                "transaction_type": transaction_type,
+                "gross_amount": gross_amount,
+                "fee": fee,
+                "net_amount": net_amount,
+                "unit_price": unit_price,
+                "quantity": quantity,
+                "timezone": date_text.rsplit(" ", 1)[-1],
+            }
+        )
+
+    period_start = min(transaction_dates)
+    period_end = max(transaction_dates)
+    section = Section(
+        short_id("acct", statement_id, "cash-app-bitcoin"),
+        "Cash App Bitcoin",
+        None,
+        "crypto",
+        "USD",
+        iso(period_start),
+        iso(period_end),
+    )
+    transactions = [
+        make_transaction(
+            statement_id=statement_id,
+            section=section,
+            institution="Cash App Bitcoin",
+            sequence=sequence,
+            transaction_date=iso(item["transaction_date"]),
+            description=item["source_type"],
+            amount=item["net_amount"],
+            fee=item["fee"],
+            quantity=item["quantity"],
+            unit_price=item["unit_price"],
+            symbol="BTC",
+            external_id=item["external_id"],
+            source_page=1,
+            source_line_start=item["source_line"],
+            source_line_end=item["source_line"],
+            raw_text=json.dumps(
+                item["row"],
+                ensure_ascii=False,
+                sort_keys=True,
+            ),
+            transaction_type=item["transaction_type"],
+            notes=json.dumps(
+                {
+                    "gross_amount": decimal_text(item["gross_amount"]),
+                    "net_amount": decimal_text(item["net_amount"]),
+                    "source_timezone": item["timezone"],
+                },
+                ensure_ascii=False,
+                sort_keys=True,
+            ),
+        )
+        for sequence, item in enumerate(parsed_rows, 1)
+    ]
+    audit = {
+        "schema_version": SCHEMA_VERSION,
+        "pages": [],
+        "unparsed_money_lines": [],
+        "ignored_money_lines": [],
+        "warnings": [],
+        "visual_review_notes": [
+            (
+                "Cash App Bitcoin transaction-history CSV; opening and closing "
+                "balances are not supplied by this source."
+            )
+        ],
+    }
+    return "Cash App Bitcoin", [section], transactions, audit
 
 
 def parse_venmo_csv(

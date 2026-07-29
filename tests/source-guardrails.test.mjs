@@ -199,6 +199,9 @@ test("requires exact visual statement verification before import", async () => {
   assert.match(importer, /build_clean_statements/);
   assert.match(importer, /all_money_lines_classified/);
   assert.match(importer, /verified_transaction_ids/);
+  assert.match(importer, /parse_cash_app_bitcoin_csv/);
+  assert.match(importer, /gross amount \+ fee = net amount/);
+  assert.match(importer, /unexpected asset amount/);
   assert.match(validator, /clean statement transactions do not match/);
   assert.match(validator, /every transaction ID must be visually verified/);
   assert.match(ledger, /predates visual completeness verification/);

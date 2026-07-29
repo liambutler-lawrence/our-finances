@@ -129,9 +129,10 @@ Read [references/canonical-schema.md](references/canonical-schema.md) before
 changing the script, adding an institution parser, or preparing an import by
 hand. Keep the site importer and validator compatible with that contract.
 
-The importer currently recognizes Apple Card, Wise, Nu, Cash App, Capital One,
-Robinhood, and generic delimited transaction CSVs. Unsupported layouts still
-produce a lossless candidate audit and a blocked bundle.
+The importer currently recognizes Apple Card, Wise, Nu, Cash App account,
+savings, investing, and Bitcoin-history sources, Capital One, Robinhood, and
+generic delimited transaction CSVs. Unsupported layouts still produce a
+lossless candidate audit and a blocked bundle.
 
 ## Categorization
 
