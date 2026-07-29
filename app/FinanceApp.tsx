@@ -13,11 +13,19 @@ import {
 } from "./account-display.mjs";
 import { getCellBreakdown } from "./cell-breakdown.mjs";
 import {
-  accountEntryMode,
+  accountAllowsManualEntry,
   FORMULA_CATEGORY_LABELS,
   SOURCE_BALANCE_CATEGORY_LABELS,
   transactionMonth,
 } from "./derive-ledger.mjs";
+import {
+  ALL_LEDGER_ASSETS,
+  ALL_LEDGER_OWNERS,
+  filterLedgerAccounts,
+  ledgerColumnFilterOptions,
+  transactionAccountIdsForMonth,
+  UNASSIGNED_LEDGER_OWNER,
+} from "./ledger-column-filters.mjs";
 import { deriveFinanceView, type ManualTransactionInput } from "./ledger";
 import { money, signedMoney } from "./money.mjs";
 import {
@@ -112,8 +120,17 @@ export function FinanceApp({
   );
   const [importStatus, setImportStatus] = useState<string>("");
   const [copyStatus, setCopyStatus] = useState<string>("");
+  const [showPrivateImport, setShowPrivateImport] = useState(false);
+  const [privateImportText, setPrivateImportText] = useState("");
   const [showPrivateExport, setShowPrivateExport] = useState(false);
   const [isImporting, setIsImporting] = useState(false);
+  const [ledgerAssetFilter, setLedgerAssetFilter] = useState(
+    ALL_LEDGER_ASSETS,
+  );
+  const [ledgerOwnerFilter, setLedgerOwnerFilter] = useState(
+    ALL_LEDGER_OWNERS,
+  );
+  const [ledgerTransactionsOnly, setLedgerTransactionsOnly] = useState(false);
   const [inspectedCell, setInspectedCell] =
     useState<LedgerCellInspection | null>(null);
   const [sourceItem, setSourceItem] = useState<CellBreakdownItem | null>(null);
@@ -152,6 +169,40 @@ export function FinanceApp({
   const activeAccounts = data.accounts.filter((account) =>
     activeAccountIds.has(account.id),
   );
+  const ledgerFilterOptions = useMemo(
+    () => ledgerColumnFilterOptions(data.accounts),
+    [data.accounts],
+  );
+  const transactionAccountIds = useMemo(
+    () => transactionAccountIdsForMonth(data.transactions, activeMonth),
+    [activeMonth, data.transactions],
+  );
+  const visibleLedgerAccounts = useMemo(
+    () =>
+      filterLedgerAccounts(activeAccounts, {
+        asset: ledgerAssetFilter,
+        owner: ledgerOwnerFilter,
+        transactionsOnly: ledgerTransactionsOnly,
+        transactionAccountIds,
+      }),
+    [
+      activeAccounts,
+      ledgerAssetFilter,
+      ledgerOwnerFilter,
+      ledgerTransactionsOnly,
+      transactionAccountIds,
+    ],
+  );
+  const visibleLedgerAccountIds = new Set(
+    visibleLedgerAccounts.map((account) => account.id),
+  );
+  const visibleLedgerCellRows = cellRows.filter(
+    (row) => row.account_id && visibleLedgerAccountIds.has(row.account_id),
+  );
+  const ledgerFiltersActive =
+    ledgerAssetFilter !== ALL_LEDGER_ASSETS ||
+    ledgerOwnerFilter !== ALL_LEDGER_OWNERS ||
+    ledgerTransactionsOnly;
   const pendingCount = data.transactions.filter(
     (transaction) =>
       transaction.source_kind !== "manual" &&
@@ -202,7 +253,7 @@ export function FinanceApp({
     (transaction) => transaction.source_kind === "source_gap",
   ).length;
   const manualAccounts = data.accounts.filter(
-    (account) => accountEntryMode(account) === "manual",
+    (account) => accountAllowsManualEntry(account, activeMonth),
   );
 
   const trend = data.months.map((value) => {
@@ -225,6 +276,23 @@ export function FinanceApp({
     } finally {
       setIsImporting(false);
       if (fileInput.current) fileInput.current.value = "";
+    }
+  }
+
+  async function importPastedBundle() {
+    setIsImporting(true);
+    setImportStatus("Checking the bundle…");
+    try {
+      const imported = await onImportBundle(JSON.parse(privateImportText));
+      setPrivateImportText("");
+      setShowPrivateImport(false);
+      setImportStatus(
+        `${imported} private records imported to your iCloud. Nothing was added to Git.`,
+      );
+    } catch (error) {
+      setImportStatus(error instanceof Error ? error.message : "Import failed");
+    } finally {
+      setIsImporting(false);
     }
   }
 
@@ -476,17 +544,107 @@ export function FinanceApp({
               Values are derived from imported statements and balance snapshots.
               Edit categories in the review queue.
             </div>
+            <div
+              className="ledger-filter-bar"
+              role="group"
+              aria-label="Ledger column filters"
+            >
+              <div className="ledger-filter-heading">
+                <span>Column filters</span>
+                <strong>
+                  {visibleLedgerAccounts.length} of {activeAccounts.length}{" "}
+                  account columns
+                </strong>
+              </div>
+              <label className="ledger-filter-select">
+                <span>Currency / asset</span>
+                <select
+                  aria-label="Filter account columns by currency or asset"
+                  value={ledgerAssetFilter}
+                  onChange={(event) => {
+                    setLedgerAssetFilter(event.target.value);
+                    setInspectedCell(null);
+                    setSourceItem(null);
+                  }}
+                >
+                  <option value={ALL_LEDGER_ASSETS}>All currencies & assets</option>
+                  {ledgerFilterOptions.assets.map((asset) => (
+                    <option key={asset} value={asset}>
+                      {asset}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="ledger-filter-select">
+                <span>Person</span>
+                <select
+                  aria-label="Filter account columns by person"
+                  value={ledgerOwnerFilter}
+                  onChange={(event) => {
+                    setLedgerOwnerFilter(event.target.value);
+                    setInspectedCell(null);
+                    setSourceItem(null);
+                  }}
+                >
+                  <option value={ALL_LEDGER_OWNERS}>All people</option>
+                  {ledgerFilterOptions.owners.map((owner) => (
+                    <option key={owner} value={owner}>
+                      {owner}
+                    </option>
+                  ))}
+                  {ledgerFilterOptions.hasUnassignedOwner ? (
+                    <option value={UNASSIGNED_LEDGER_OWNER}>
+                      Shared / unassigned
+                    </option>
+                  ) : null}
+                </select>
+              </label>
+              <button
+                type="button"
+                className={`ledger-activity-filter ${
+                  ledgerTransactionsOnly ? "active" : ""
+                }`}
+                aria-pressed={ledgerTransactionsOnly}
+                onClick={() => {
+                  setLedgerTransactionsOnly((value) => !value);
+                  setInspectedCell(null);
+                  setSourceItem(null);
+                }}
+              >
+                <span aria-hidden="true" />
+                <span>
+                  <strong>Transactions this month</strong>
+                  <small>Only show account columns with activity</small>
+                </span>
+              </button>
+              {ledgerFiltersActive ? (
+                <button
+                  type="button"
+                  className="ledger-filter-reset"
+                  onClick={() => {
+                    setLedgerAssetFilter(ALL_LEDGER_ASSETS);
+                    setLedgerOwnerFilter(ALL_LEDGER_OWNERS);
+                    setLedgerTransactionsOnly(false);
+                    setInspectedCell(null);
+                    setSourceItem(null);
+                  }}
+                >
+                  Reset
+                </button>
+              ) : null}
+            </div>
             <article className="panel ledger-panel">
               <PanelHead
                 title={monthLabel(activeMonth)}
-                meta={`${activeAccounts.length} accounts · ${cellRows.length} ledger cells`}
+                meta={`${visibleLedgerAccounts.length} accounts · ${visibleLedgerCellRows.length} visible ledger cells`}
               />
-              <div className="ledger-scroll">
-                <table className="ledger-table">
+              {visibleLedgerAccounts.length ? (
+                <div className="ledger-scroll">
+                  <table className="ledger-table">
                   <thead>
                     <tr>
                       <th>Category</th>
-                      {activeAccounts.map((account) => {
+                      {visibleLedgerAccounts.map((account) => {
                         const owner = ledgerAccountOwner(account);
                         return (
                           <th key={account.id}>
@@ -499,18 +657,23 @@ export function FinanceApp({
                           </th>
                         );
                       })}
-                      <th>Total {currency}</th>
+                      <th>Visible total {currency}</th>
                     </tr>
                   </thead>
                   <tbody>
                     {data.categories
                       .filter((category) =>
-                        cellRows.some((row) => row.category_id === category.id),
+                        visibleLedgerCellRows.some(
+                          (row) => row.category_id === category.id,
+                        ),
                       )
                       .map((category) => {
-                        const summary = categorySummaryRows.find(
-                          (row) => row.category_id === category.id,
-                        );
+                        const visibleTotal = visibleLedgerCellRows
+                          .filter((row) => row.category_id === category.id)
+                          .reduce(
+                            (sum, row) => sum + number(row[currencyKey]),
+                            0,
+                          );
                         const isFormula = FORMULA_CATEGORY_LABELS.has(
                           category.label,
                         );
@@ -529,7 +692,7 @@ export function FinanceApp({
                                 <small>Derived</small>
                               ) : null}
                             </th>
-                            {activeAccounts.map((account) => {
+                            {visibleLedgerAccounts.map((account) => {
                               const row = cellRows.find(
                                 (item) =>
                                   item.category_id === category.id &&
@@ -585,14 +748,35 @@ export function FinanceApp({
                               );
                             })}
                             <td className="row-total">
-                              {signedMoney(number(summary?.[currencyKey]), currency)}
+                              {signedMoney(visibleTotal, currency)}
                             </td>
                           </tr>
                         );
                       })}
                   </tbody>
-                </table>
-              </div>
+                  </table>
+                </div>
+              ) : (
+                <div className="ledger-filter-empty">
+                  <span aria-hidden="true">⌁</span>
+                  <strong>No account columns match these filters</strong>
+                  <p>
+                    Change a currency, asset, or person filter—or show accounts
+                    without transactions this month.
+                  </p>
+                  <button
+                    type="button"
+                    className="secondary-button"
+                    onClick={() => {
+                      setLedgerAssetFilter(ALL_LEDGER_ASSETS);
+                      setLedgerOwnerFilter(ALL_LEDGER_OWNERS);
+                      setLedgerTransactionsOnly(false);
+                    }}
+                  >
+                    Reset column filters
+                  </button>
+                </div>
+              )}
             </article>
             {inspectedCell?.month === activeMonth ? (
               <LedgerCellInspector
@@ -735,6 +919,10 @@ export function FinanceApp({
                               <small className="source-gap-label">
                                 Needs statement matching
                               </small>
+                            ) : transaction.ledger_role === "evidence_only" ? (
+                              <small className="source-confidence">
+                                Corroborating statement evidence · excluded from totals
+                              </small>
                             ) : transaction.match_confidence === "medium" ? (
                               <small className="source-confidence">
                                 Statement match needs verification
@@ -756,6 +944,7 @@ export function FinanceApp({
                           <select
                             aria-label={`Category for ${transaction.description}`}
                             defaultValue={transaction.category_id ?? ""}
+                            disabled={transaction.ledger_role === "evidence_only"}
                             onChange={(event) =>
                               reviewTransaction(transaction, event.target.value)
                             }
@@ -822,14 +1011,55 @@ export function FinanceApp({
                   upload the generated bundle here. Files and values stay out of
                   the public repository.
                 </p>
-                <button
-                  className="primary-button"
-                  type="button"
-                  onClick={() => fileInput.current?.click()}
-                  disabled={isImporting}
-                >
-                  {isImporting ? "Importing…" : "Choose private bundle"}
-                </button>
+                <div className="import-actions">
+                  <button
+                    className="primary-button"
+                    type="button"
+                    onClick={() => fileInput.current?.click()}
+                    disabled={isImporting}
+                  >
+                    {isImporting ? "Importing…" : "Choose private bundle"}
+                  </button>
+                  <button
+                    className="secondary-button"
+                    type="button"
+                    aria-expanded={showPrivateImport}
+                    onClick={() => setShowPrivateImport((current) => !current)}
+                    disabled={isImporting}
+                  >
+                    {showPrivateImport
+                      ? "Hide private bundle text"
+                      : "Paste private bundle JSON"}
+                  </button>
+                </div>
+                {showPrivateImport ? (
+                  <div className="private-import-text">
+                    <label htmlFor="private-ledger-import">
+                      Private bundle JSON
+                    </label>
+                    <p>
+                      Parsed only in this browser, saved to your private iCloud,
+                      and cleared after a successful import.
+                    </p>
+                    <textarea
+                      id="private-ledger-import"
+                      value={privateImportText}
+                      onChange={(event) =>
+                        setPrivateImportText(event.target.value)
+                      }
+                      placeholder="Paste a verified statement bundle or full-ledger migration"
+                      spellCheck={false}
+                    />
+                    <button
+                      className="primary-button"
+                      type="button"
+                      onClick={() => void importPastedBundle()}
+                      disabled={isImporting || !privateImportText.trim()}
+                    >
+                      {isImporting ? "Importing…" : "Import pasted bundle"}
+                    </button>
+                  </div>
+                ) : null}
                 {importStatus ? <p className="import-status">{importStatus}</p> : null}
               </article>
               <article className="panel export-panel">

@@ -36,7 +36,9 @@ exact, while suggested budget categories may remain editable.
 
 7. Verify every transaction individually, including multiline descriptions,
    dates, posted dates, signs, decimal separators, currencies, fees, running
-   balances, quantities, prices, symbols, IDs, and page/line locators. A
+   balances, quantities, prices, symbols, IDs, and page/line locators. Record
+   each statement-supplied opening/closing asset position as a separate balance
+   control, preserving only the quantity/value fields actually printed. A
    plausible count or sample check is not sufficient.
 8. Resolve every money-bearing line decisively as a transaction, balance,
    statement total, disclosure, rate, holding, or other non-transaction. If a
@@ -80,7 +82,8 @@ Require all of the following:
 - Opening balance + signed activity = closing balance within the currency
   tolerance whenever the statement supplies both balances.
 - Statement-level totals, fees, payments, interest, and holdings reconcile when
-  present.
+  present. Every supplied per-symbol closing position is preserved as a
+  verified balance control rather than inferred from transaction activity.
 - Temporary authorizations, reversals, transfers, credit-card payments, and
   investment buys/sells remain distinct records.
 - The clean `statements[]` structure contains `date_range`,
@@ -98,6 +101,15 @@ inspection can settle.
 
 - Treat a PDF containing multiple accounts or periods as multiple sections in
   one statement, not as one blended account.
+- Preserve the source's transaction/operation date as `transaction_date` and a
+  distinct charge/posting/application date as `posted_date`. Never substitute a
+  statement folder, nominal month, period end, or posting date for a printed
+  operation date.
+- Calendar-month ledger placement is derived from `transaction_date`, even when
+  one statement period crosses a month boundary. A statement spanning May and
+  June must contribute its May-dated and June-dated transactions to different
+  budget months. Use `posted_date` only when the source genuinely omits an
+  operation date.
 - Preserve the source's sign semantics. For credit cards, charges increase the
   card balance and payments reduce it. For asset accounts, buys reduce cash and
   increase holdings; keep both the cash amount and quantity/price fields.
@@ -117,9 +129,10 @@ Read [references/canonical-schema.md](references/canonical-schema.md) before
 changing the script, adding an institution parser, or preparing an import by
 hand. Keep the site importer and validator compatible with that contract.
 
-The importer currently recognizes Apple Card, Wise, Nu, Cash App, Capital One,
-Robinhood, and generic delimited transaction CSVs. Unsupported layouts still
-produce a lossless candidate audit and a blocked bundle.
+The importer currently recognizes Apple Card, Wise, Nu, Cash App account,
+savings, investing, and Bitcoin-history sources, Capital One, Robinhood, and
+generic delimited transaction CSVs. Unsupported layouts still produce a
+lossless candidate audit and a blocked bundle.
 
 ## Categorization
 

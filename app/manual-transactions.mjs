@@ -1,4 +1,4 @@
-import { accountEntryMode } from "./derive-ledger.mjs";
+import { accountAllowsManualEntry } from "./derive-ledger.mjs";
 
 export function createManualTransaction(data, input) {
   const checked = validateInput(data, input);
@@ -20,6 +20,7 @@ export function createManualTransaction(data, input) {
     categorization_source: "user",
     review_status: "reviewed",
     source_kind: "manual",
+    ledger_role: "activity",
     fee_text: null,
     balance_text: null,
     quantity_text: null,
@@ -88,7 +89,12 @@ export function deleteManualTransaction(data, transactionId) {
 
 function validateInput(data, input) {
   const account = data.accounts.find((item) => item.id === input.accountId);
-  if (!account || accountEntryMode(account) !== "manual") {
+  const transactionDate = String(input.transactionDate ?? "").trim();
+  if (!isIsoDate(transactionDate)) throw new Error("Enter a valid date");
+  if (
+    !account ||
+    !accountAllowsManualEntry(account, transactionDate.slice(0, 7))
+  ) {
     throw new Error("Choose a manually managed account");
   }
   const category = data.categories.find((item) => item.id === input.categoryId);
@@ -97,8 +103,6 @@ function validateInput(data, input) {
   }
   const description = String(input.description ?? "").trim();
   if (!description) throw new Error("Description is required");
-  const transactionDate = String(input.transactionDate ?? "").trim();
-  if (!isIsoDate(transactionDate)) throw new Error("Enter a valid date");
   const amountText = String(input.amountText ?? "").trim();
   if (!/^-?(?:\d+|\d*\.\d+)$/.test(amountText)) {
     throw new Error("Enter a signed amount");

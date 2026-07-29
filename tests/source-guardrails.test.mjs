@@ -7,6 +7,7 @@ import {
 } from "../app/account-display.mjs";
 import { getCellBreakdown } from "../app/cell-breakdown.mjs";
 import {
+  accountAllowsManualEntry,
   accountEntryMode,
   deriveLedgerData,
   SOURCE_BALANCE_CATEGORY_LABELS,
@@ -16,6 +17,14 @@ import {
   deleteManualTransaction,
   updateManualTransaction,
 } from "../app/manual-transactions.mjs";
+import {
+  ALL_LEDGER_ASSETS,
+  ALL_LEDGER_OWNERS,
+  filterLedgerAccounts,
+  ledgerColumnFilterOptions,
+  transactionAccountIdsForMonth,
+  UNASSIGNED_LEDGER_OWNER,
+} from "../app/ledger-column-filters.mjs";
 import { money, signedMoney } from "../app/money.mjs";
 import {
   statementReviewStatements,
@@ -198,6 +207,9 @@ test("requires exact visual statement verification before import", async () => {
   assert.match(importer, /build_clean_statements/);
   assert.match(importer, /all_money_lines_classified/);
   assert.match(importer, /verified_transaction_ids/);
+  assert.match(importer, /parse_cash_app_bitcoin_csv/);
+  assert.match(importer, /gross amount \+ fee = net amount/);
+  assert.match(importer, /unexpected asset amount/);
   assert.match(validator, /clean statement transactions do not match/);
   assert.match(validator, /every transaction ID must be visually verified/);
   assert.match(ledger, /predates visual completeness verification/);
@@ -214,6 +226,80 @@ test("formats asset-denominated ledger cells without crashing", () => {
   assert.equal(signedMoney(-1.25, "AVAX"), "−1.25 AVAX");
   assert.equal(money(0.00000001, "BTC"), "0.00000001 BTC");
   assert.match(money(12.5, "USD"), /\$12\.50/);
+});
+
+test("filters monthly ledger account columns without filtering cell contents", () => {
+  const accounts = [
+    {
+      id: "liam-usd",
+      label: "Card @Liam USD",
+      currency: "USD",
+      asset_symbol: null,
+    },
+    {
+      id: "mar-btc",
+      label: "Wallet @Mar BTC",
+      currency: "BTC",
+      asset_symbol: "BTC",
+    },
+    {
+      id: "shared-usd",
+      label: "Cash USD",
+      currency: "USD",
+      asset_symbol: null,
+    },
+  ];
+  const transactions = [
+    {
+      id: "liam-june",
+      account_id: "liam-usd",
+      budget_month: "2026-06",
+    },
+    {
+      id: "mar-evidence",
+      account_id: "mar-btc",
+      budget_month: "2026-06",
+      ledger_role: "evidence_only",
+    },
+    {
+      id: "mar-july",
+      account_id: "mar-btc",
+      transaction_date: "2026-07-02",
+    },
+  ];
+  const juneAccountIds = transactionAccountIdsForMonth(
+    transactions,
+    "2026-06",
+  );
+  const options = ledgerColumnFilterOptions(accounts);
+
+  assert.deepEqual(options.assets, ["BTC", "USD"]);
+  assert.deepEqual(options.owners, ["@Liam", "@Mar"]);
+  assert.equal(options.hasUnassignedOwner, true);
+  assert.deepEqual(
+    filterLedgerAccounts(accounts, {
+      asset: "USD",
+      owner: ALL_LEDGER_OWNERS,
+      transactionAccountIds: juneAccountIds,
+    }).map((account) => account.id),
+    ["liam-usd", "shared-usd"],
+  );
+  assert.deepEqual(
+    filterLedgerAccounts(accounts, {
+      asset: ALL_LEDGER_ASSETS,
+      owner: "@Liam",
+      transactionsOnly: true,
+      transactionAccountIds: juneAccountIds,
+    }).map((account) => account.id),
+    ["liam-usd"],
+  );
+  assert.deepEqual(
+    filterLedgerAccounts(accounts, {
+      owner: UNASSIGNED_LEDGER_OWNER,
+      transactionAccountIds: juneAccountIds,
+    }).map((account) => account.id),
+    ["shared-usd"],
+  );
 });
 
 test("filters the statement review queue without exposing manual transactions", () => {
@@ -534,6 +620,16 @@ test("derives monthly cells and balance formulas from transactions and snapshots
         currency: "USD",
         source_kind: "statement",
       },
+      {
+        id: "corroborating-evidence",
+        account_id: "account-demo",
+        category_id: "category-demo",
+        transaction_date: "2026-06-06",
+        amount_text: "-999",
+        currency: "USD",
+        source_kind: "statement",
+        ledger_role: "evidence_only",
+      },
     ],
     balances: [
       {
@@ -764,6 +860,13 @@ test("manual account transactions can be added, edited, and deleted", () => {
         currency: "USD",
         entry_mode: "manual",
       },
+      {
+        id: "statement-demo",
+        label: "Statement demo",
+        currency: "USD",
+        entry_mode: "statement",
+        manual_periods: ["2026-07"],
+      },
     ],
     categories: [
       {
@@ -775,6 +878,14 @@ test("manual account transactions can be added, edited, and deleted", () => {
     transactions: [],
   };
   assert.equal(accountEntryMode(base.accounts[0]), "manual");
+  assert.equal(
+    accountAllowsManualEntry(base.accounts[1], "2026-07"),
+    true,
+  );
+  assert.equal(
+    accountAllowsManualEntry(base.accounts[1], "2026-06"),
+    false,
+  );
   const created = createManualTransaction(base, {
     accountId: "cash-demo",
     categoryId: "category-demo",
@@ -800,4 +911,23 @@ test("manual account transactions can be added, edited, and deleted", () => {
     created.transaction.id,
   );
   assert.equal(deleted.transactions.length, 0);
+  const provisional = createManualTransaction(base, {
+    accountId: "statement-demo",
+    categoryId: "category-demo",
+    transactionDate: "2026-07-04",
+    description: "Awaiting statement",
+    amountText: "-5",
+  });
+  assert.equal(provisional.transaction.source_kind, "manual");
+  assert.throws(
+    () =>
+      createManualTransaction(base, {
+        accountId: "statement-demo",
+        categoryId: "category-demo",
+        transactionDate: "2026-06-04",
+        description: "Not a manual period",
+        amountText: "-5",
+      }),
+    /manually managed account/,
+  );
 });

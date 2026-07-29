@@ -281,6 +281,53 @@ def main() -> int:
                         f"clean statement {index} {field} amount disagrees "
                         "with the manifest"
                     )
+        positions = statement.get("positions")
+        if not isinstance(positions, list):
+            errors.append(f"clean statement {index} positions must be an array")
+            positions = []
+        if positions != (manifest_section.get("positions") or []):
+            errors.append(
+                f"clean statement {index} positions disagree with the manifest"
+            )
+        for position_index, position in enumerate(positions, 1):
+            if not isinstance(position, dict):
+                errors.append(
+                    f"clean statement {index} position {position_index} "
+                    "must be an object"
+                )
+                continue
+            if not str(position.get("symbol") or "").strip():
+                errors.append(
+                    f"clean statement {index} position {position_index} "
+                    "has no symbol"
+                )
+            for quantity_field in ("opening_quantity", "closing_quantity"):
+                quantity = position.get(quantity_field)
+                if quantity is None and quantity_field == "opening_quantity":
+                    continue
+                try:
+                    Decimal(str(quantity))
+                except (InvalidOperation, TypeError):
+                    errors.append(
+                        f"clean statement {index} position {position_index} "
+                        f"has invalid {quantity_field}"
+                    )
+            if position.get("verification_status") != "verified":
+                errors.append(
+                    f"clean statement {index} position {position_index} "
+                    "is not verified"
+                )
+            if not str(position.get("raw_text") or "").strip():
+                errors.append(
+                    f"clean statement {index} position {position_index} "
+                    "has no source evidence"
+                )
+            source_page = position.get("source_page")
+            if not isinstance(source_page, int) or source_page < 1:
+                errors.append(
+                    f"clean statement {index} position {position_index} "
+                    "has an invalid source page"
+                )
         clean_transactions = statement.get("transactions")
         if not isinstance(clean_transactions, list):
             errors.append(f"clean statement {index} transactions must be an array")

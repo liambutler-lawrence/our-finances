@@ -46,6 +46,22 @@ Schema version: `1.1.0`.
     "raw_text": "verbatim source evidence",
     "verification_status": "verified"
   },
+  "positions": [
+    {
+      "symbol": "BTC",
+      "description": "Bitcoin",
+      "opening_quantity": null,
+      "closing_quantity": "0.12345678",
+      "unit_price": null,
+      "market_value": "12345.67",
+      "currency": "BTC",
+      "source_page": 1,
+      "source_line_start": 1,
+      "source_line_end": 1,
+      "raw_text": "verbatim source evidence",
+      "verification_status": "verified"
+    }
+  ],
   "transactions": [],
   "ending_balance": {
     "included": true,
@@ -65,6 +81,13 @@ When a balance is not present, use `included=false`, `amount=null`, and
 rendered source; it is not the same as parser failure. The four source elements
 must never contain tentative records.
 
+`positions[]` is optional and contains exact statement-supplied holding
+quantities. Preserve only fields printed by the source: do not derive a unit
+price merely because quantity and market value are available. A complete
+holdings table is an ending-balance control for each listed asset. When the
+source supplies an opening quantity, preserve that separately. Positions are
+not transactions and must not be added to cash activity.
+
 ## Transaction fields
 
 | Field | Requirement |
@@ -77,7 +100,7 @@ must never contain tentative records.
 | `account_last4` | Last four only when available. |
 | `account_type` | `checking`, `savings`, `credit`, `brokerage`, `crypto`, `cash`, or `unknown`. |
 | `period_start`, `period_end` | ISO dates when supplied. |
-| `transaction_date`, `posted_date` | ISO dates; preserve both when distinct. |
+| `transaction_date`, `posted_date` | ISO dates; `transaction_date` is the printed transaction/operation date and governs calendar-month ledger placement. Preserve a distinct posting/application date as `posted_date`; never replace the operation date with the statement period end. |
 | `description` | Source description without categorization edits. |
 | `amount` | Exact signed decimal string in `currency`. |
 | `currency` | ISO currency or asset symbol. |
@@ -85,7 +108,7 @@ must never contain tentative records.
 | `transaction_type` | Transfer/payment/purchase/fee/interest/trade/etc. |
 | `category` | Suggested budget category. |
 | `category_confidence` | Decimal from 0 to 1. |
-| `categorization_source` | `rule`, `reviewed_mapping`, `source`, or `unknown`. |
+| `categorization_source` | `rule`, `reviewed_mapping`, `source`, or `needs_review`. |
 | `review_status` | Initially `needs_review`; never auto-approve uncertain rows. |
 | `fee` | Exact fee decimal when supplied. |
 | `balance` | Running balance after the transaction when supplied. |
@@ -150,6 +173,8 @@ create the private review record:
         "raw_text": null,
         "verified": true
       },
+      "positions_verified": true,
+      "verified_positions": [],
       "transactions_verified": true,
       "transaction_count": 0,
       "verified_transaction_ids": [],
@@ -170,7 +195,10 @@ create the private review record:
 List every rendered PDF page explicitly. `resolved_warnings` must contain every
 parser warning verbatim after visual resolution. List every verified transaction
 ID explicitly in its statement section; a count alone is not evidence of
-transaction-by-transaction review. A visual assertion cannot override an
+transaction-by-transaction review. When the section has holdings, set
+`positions_verified=true` and list every exact position control—including its
+symbol, opening/closing quantities, source locator, and raw text—in
+`verified_positions[]`. A visual assertion cannot override an
 unparsed money line, a reconciliation failure, a missing date range, or a
 disagreement with the parsed balances or transactions.
 
