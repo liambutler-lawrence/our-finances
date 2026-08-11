@@ -3,8 +3,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   initializeCloudKit,
-  loadPrivateLedger,
-  savePrivateLedger,
+  loadLedgerDocuments,
+  saveLedgerDocument,
+  shareLedgerDocument,
   watchCloudKitIdentity,
   type CloudKitIdentity,
   type StoredLedger,
@@ -25,36 +26,75 @@ type CloudKitContainer = Awaited<ReturnType<typeof initializeCloudKit>>;
 
 export function CloudKitFinance() {
   const [identity, setIdentity] = useState<CloudKitIdentity | null>();
-  const [ledger, setLedger] = useState<StoredLedger>();
+  const [documents, setDocuments] = useState<StoredLedger[]>();
+  const [activeDocumentId, setActiveDocumentId] = useState("");
+  const [sharingStatus, setSharingStatus] = useState("");
+  const [sharingBusy, setSharingBusy] = useState(false);
   const [error, setError] = useState("");
   const containerRef = useRef<CloudKitContainer>();
   const ledgerRef = useRef<StoredLedger>();
+  const documentsRef = useRef(new Map<string, StoredLedger>());
+  const activeDocumentIdRef = useRef("");
   const saveQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const openingRef = useRef<{
+    userRecordName: string;
+    promise: Promise<void>;
+  }>();
 
-  const openLedger = useCallback(
-    async (container: CloudKitContainer, nextIdentity: CloudKitIdentity) => {
-      setError("");
-      setIdentity(nextIdentity);
-      setLedger(undefined);
-      try {
-        const stored = await loadPrivateLedger(container);
-        ledgerRef.current = stored;
-        setLedger(stored);
-      } catch (caught) {
-        setError(message(caught, "Could not load your private iCloud ledger"));
-      }
+  const installDocuments = useCallback(
+    (next: StoredLedger[], requestedId?: string) => {
+      const byId = new Map(next.map((document) => [document.id, document]));
+      const selected =
+        byId.get(requestedId ?? activeDocumentIdRef.current) ?? next[0];
+      documentsRef.current = byId;
+      ledgerRef.current = selected;
+      activeDocumentIdRef.current = selected?.id ?? "";
+      setDocuments(next);
+      setActiveDocumentId(selected?.id ?? "");
     },
     [],
   );
 
+  const openLedger = useCallback(
+    (container: CloudKitContainer, nextIdentity: CloudKitIdentity) => {
+      const opening = openingRef.current;
+      if (opening?.userRecordName === nextIdentity.userRecordName) {
+        return opening.promise;
+      }
+      const promise = (async () => {
+        setError("");
+        setIdentity(nextIdentity);
+        setDocuments(undefined);
+        try {
+          const loaded = await loadLedgerDocuments(container);
+          installDocuments(loaded);
+        } catch (caught) {
+          setError(message(caught, "Could not load your iCloud ledgers"));
+        }
+      })();
+      openingRef.current = {
+        userRecordName: nextIdentity.userRecordName,
+        promise,
+      };
+      void promise.finally(() => {
+        if (openingRef.current?.promise === promise) {
+          openingRef.current = undefined;
+        }
+      });
+      return promise;
+    },
+    [installDocuments],
+  );
+
   useEffect(() => {
     let active = true;
+    let stopWatching = () => undefined;
     void (async () => {
       try {
         const container = await initializeCloudKit();
         if (!active) return;
         containerRef.current = container;
-        watchCloudKitIdentity(
+        stopWatching = watchCloudKitIdentity(
           container,
           (nextIdentity) => {
             if (active) void openLedger(container, nextIdentity);
@@ -62,9 +102,14 @@ export function CloudKitFinance() {
           () => {
             if (!active) return;
             ledgerRef.current = undefined;
-            setLedger(undefined);
+            documentsRef.current.clear();
+            activeDocumentIdRef.current = "";
+            openingRef.current = undefined;
+            setDocuments(undefined);
+            setActiveDocumentId("");
             setIdentity(null);
             setError("");
+            setSharingStatus("");
           },
           (caught) => {
             if (active) setError(caught.message);
@@ -86,6 +131,7 @@ export function CloudKitFinance() {
     })();
     return () => {
       active = false;
+      stopWatching();
     };
   }, [openLedger]);
 
@@ -97,32 +143,99 @@ export function CloudKitFinance() {
       });
     }, 0);
     return () => window.clearTimeout(timer);
-  }, [identity, ledger]);
+  }, [identity, documents]);
+
+  const refreshDocuments = useCallback(
+    async (silent = false) => {
+      const container = containerRef.current;
+      if (!container || !identity) return;
+      if (!silent) {
+        setSharingBusy(true);
+        setSharingStatus("Refreshing iCloud sharing…");
+      }
+      try {
+        await saveQueueRef.current.catch(() => undefined);
+        const loaded = await loadLedgerDocuments(container);
+        installDocuments(loaded, activeDocumentIdRef.current);
+        if (!silent) {
+          const sharedCount = loaded.filter(
+            (document) => document.access === "shared",
+          ).length;
+          setSharingStatus(
+            sharedCount
+              ? `${sharedCount} shared ledger${sharedCount === 1 ? "" : "s"} available`
+              : "No accepted shared ledgers yet",
+          );
+        }
+      } catch (caught) {
+        const text = message(caught, "Could not refresh shared ledgers");
+        setSharingStatus(text);
+        if (silent) setError(text);
+      } finally {
+        if (!silent) setSharingBusy(false);
+      }
+    },
+    [identity, installDocuments],
+  );
+
+  useEffect(() => {
+    if (!identity || !documents) return;
+    const refreshOnFocus = () => void refreshDocuments(true);
+    window.addEventListener("focus", refreshOnFocus);
+    return () => window.removeEventListener("focus", refreshOnFocus);
+  }, [documents, identity, refreshDocuments]);
+
+  function selectDocument(id: string) {
+    const selected = documentsRef.current.get(id);
+    if (!selected) return;
+    activeDocumentIdRef.current = id;
+    ledgerRef.current = selected;
+    setActiveDocumentId(id);
+    setSharingStatus("");
+  }
+
+  function installSavedDocument(saved: StoredLedger) {
+    documentsRef.current.set(saved.id, saved);
+    ledgerRef.current =
+      activeDocumentIdRef.current === saved.id ? saved : ledgerRef.current;
+    setDocuments((current) =>
+      current?.map((document) =>
+        document.id === saved.id ? saved : document,
+      ),
+    );
+  }
 
   async function updateLedger<T>(
     change: (
       current: StoredLedger,
-    ) => Promise<{ data: StoredLedger["data"]; result: T }>,
+    ) => Promise<{
+      data: StoredLedger["data"];
+      title?: string;
+      result: T;
+    }>,
   ): Promise<T> {
     let output!: T;
     let failure: unknown;
+    const targetId = ledgerRef.current?.id;
     saveQueueRef.current = saveQueueRef.current
       .catch(() => undefined)
       .then(async () => {
         const container = containerRef.current;
-        const current =
-          ledgerRef.current ?? { data: structuredClone(emptyFinanceData) };
+        const current = targetId
+          ? documentsRef.current.get(targetId)
+          : undefined;
         if (!container || !identity) {
           throw new Error("Sign in with Apple before changing this ledger");
         }
+        if (!current) throw new Error("Open a ledger before changing it");
         const changed = await change(current);
-        const saved = await savePrivateLedger(
+        const saved = await saveLedgerDocument(
           container,
+          current,
           changed.data,
-          current.recordChangeTag,
+          changed.title ?? current.title,
         );
-        ledgerRef.current = saved;
-        setLedger(saved);
+        installSavedDocument(saved);
         output = changed.result;
       })
       .catch((caught) => {
@@ -178,6 +291,34 @@ export function CloudKitFinance() {
     }));
   }
 
+  async function renameDocument(title: string) {
+    await updateLedger(async (current) => ({
+      data: current.data,
+      title,
+      result: undefined,
+    }));
+    setSharingStatus("Ledger name saved to its encrypted payload");
+  }
+
+  async function manageSharing() {
+    const container = containerRef.current;
+    const current = ledgerRef.current;
+    if (!container || !current) return;
+    setSharingBusy(true);
+    setSharingStatus("Opening Apple’s private sharing controls…");
+    try {
+      await shareLedgerDocument(container, current);
+      setSharingStatus(
+        "Sharing updated. Invitees can open this site after accepting in iCloud.",
+      );
+      await refreshDocuments(true);
+    } catch (caught) {
+      setSharingStatus(message(caught, "Could not manage sharing"));
+    } finally {
+      setSharingBusy(false);
+    }
+  }
+
   function exportCsv() {
     const csv = exportTransactionsCsv(
       ledgerRef.current?.data ?? emptyFinanceData,
@@ -228,11 +369,15 @@ export function CloudKitFinance() {
     );
   }
 
+  const ledger = documents?.find(
+    (document) => document.id === activeDocumentId,
+  );
+
   if (!ledger) {
     return (
       <AuthCard
-        title="Loading your private ledger…"
-        copy="Your encrypted financial data is being read directly from your iCloud account."
+        title="Loading your iCloud ledgers…"
+        copy="Your encrypted financial data and accepted shares are being read directly from iCloud."
         error={error}
         loading={!error}
       />
@@ -245,9 +390,22 @@ export function CloudKitFinance() {
       <div id="apple-sign-in-button" className="apple-signin-hidden" />
       <FinanceApp
         data={ledger.data}
+        documents={(documents ?? []).map((document) => ({
+          id: document.id,
+          title: document.title,
+          access: document.access,
+        }))}
+        activeDocumentId={ledger.id}
+        activeDocumentAccess={ledger.access}
+        onSelectDocument={selectDocument}
+        onManageSharing={manageSharing}
+        onRefreshDocuments={() => refreshDocuments(false)}
+        onRenameDocument={renameDocument}
+        sharingStatus={sharingStatus}
+        sharingBusy={sharingBusy}
         user={{
           displayName: givenName || "iCloud account",
-          role: "Private iCloud",
+          role: ledger.access === "owner" ? "Ledger owner" : "Collaborator",
         }}
         onImportBundle={importBundle}
         onReviewTransaction={categorizeTransaction}

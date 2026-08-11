@@ -14,16 +14,20 @@ The application source is public and contains **no household financial data**.
 ## Privacy model
 
 Each person signs in with Apple and gets a separate ledger in that Apple ID's
-CloudKit private database. A friend who signs into the same site gets their own
-empty ledger, not the site owner's data.
+CloudKit private database. A friend who simply signs into the same site gets
+their own empty ledger, not the site owner's data. A ledger owner can separately
+invite another iCloud user through Apple's private CloudKit sharing UI.
 
 - The browser talks directly to CloudKit; the application server does not
   receive statement contents, transactions, balances, or exports.
-- The ledger is compressed into an encrypted CloudKit field in the user's
-  private database, with a SHA-256 integrity digest.
+- The ledger is compressed into an encrypted CloudKit field in the owner's
+  private custom record zone, with a SHA-256 integrity digest.
 - CloudKit isolates private database records by Apple account. Apple Advanced
   Data Protection provides the strongest available end-to-end protection for
-  eligible iCloud data.
+  eligible iCloud data, including records shared with invited participants.
+- Sharing is invite-only: the owner chooses iCloud participants, and accepted
+  collaborators read and write through their own CloudKit shared database.
+  There is no public data link or application-owned participant database.
 - There is no shared application database, server-side financial-data store,
   owner allowlist, or master account.
 - Users can export the complete private ledger as JSON and every canonical
@@ -88,7 +92,9 @@ npm test
 
 ## CloudKit setup
 
-The current schema uses a `FinanceLedger` record in the private database:
+The current schema uses a `FinanceLedger` record in a private custom zone. The
+custom zone makes Apple's native record sharing possible without moving the
+data to a public or application-controlled database:
 
 | Field | CloudKit type |
 | --- | --- |
@@ -106,8 +112,21 @@ Promote schema changes through CloudKit Console before switching
 - Next.js-compatible app router via vinext
 - Cloudflare Worker runtime with no financial-data binding
 - CloudKit JS and Sign in with Apple
-- Per-user CloudKit private database
+- Per-user CloudKit private database plus invite-only shared zones
 - Client-side canonical import, category review, derivation, and export
+
+On the first load after the sharing upgrade, the browser copies the existing
+default-zone ledger into the owner's custom zone. The original default-zone
+record is retained as a rollback copy and is never shared. The encrypted
+payload now also contains the user-visible ledger document name; no new
+financial-data field is exposed in the CloudKit schema.
+
+Owners use **Shared access** to open Apple's sharing controls. Invitations are
+restricted to private, read/write participants. After accepting, a collaborator
+can choose the shared ledger from the sidebar document switcher. The owner
+continues to supply the iCloud storage quota. Concurrent edits use CloudKit's
+record change tag, so a stale save is rejected instead of silently overwriting
+a newer version.
 
 The monthly UI is a pure view of canonical transactions, balance snapshots,
 and price snapshots. Total change, starting balance, ending balance, and

@@ -104,7 +104,7 @@ test("keeps private financial artifacts out of Git", async () => {
   }
 });
 
-test("uses per-user private CloudKit without a shared data binding", async () => {
+test("uses invite-only encrypted CloudKit sharing without a site data binding", async () => {
   const [hosting, cloudkit, ledger, skill] = await Promise.all([
     source(".openai/hosting.json"),
     source("app/cloudkit.ts"),
@@ -115,6 +115,11 @@ test("uses per-user private CloudKit without a shared data binding", async () =>
   assert.equal(bindings.d1, null);
   assert.equal(bindings.r2, null);
   assert.match(cloudkit, /privateCloudDatabase/);
+  assert.match(cloudkit, /sharedCloudDatabase/);
+  assert.match(cloudkit, /saveRecordZones\(LEDGER_ZONE_NAME\)/);
+  assert.match(cloudkit, /shareWithUI/);
+  assert.match(cloudkit, /supportedAccess:\s*\["PRIVATE"\]/);
+  assert.match(cloudkit, /supportedPermissions:\s*\["READ_WRITE"\]/);
   assert.match(cloudkit, /isEncrypted:\s*true/);
   assert.match(cloudkit, /NEXT_PUBLIC_CLOUDKIT_ENVIRONMENT \?\? "production"/);
   assert.doesNotMatch(cloudkit, /publicCloudDatabase/);
@@ -141,7 +146,7 @@ test("keeps CloudKit deployment values out of tracked configuration", async () =
 test("keeps the private import input mounted for an empty ledger", async () => {
   const app = await source("app/FinanceApp.tsx");
   const input = app.indexOf('accept=".json,application/json"');
-  const emptyState = app.indexOf("{isEmpty ? (");
+  const emptyState = app.indexOf('{isEmpty && tab !== "sharing" ? (');
   assert.ok(input > -1);
   assert.ok(emptyState > -1);
   assert.ok(input < emptyState);

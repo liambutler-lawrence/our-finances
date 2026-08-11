@@ -33,7 +33,12 @@ import {
   statementReviewTransactions,
 } from "./statement-review.mjs";
 
-type Tab = "overview" | "month" | "review" | "manual" | "data";
+type Tab = "overview" | "month" | "review" | "manual" | "data" | "sharing";
+type LedgerDocumentOption = {
+  id: string;
+  title: string;
+  access: "owner" | "shared";
+};
 type CellBreakdownItem = ReturnType<typeof getCellBreakdown>[number];
 type LedgerCellInspection = {
   key: string;
@@ -78,7 +83,16 @@ function initials(value: string) {
 
 export function FinanceApp({
   data: storedData,
+  documents,
+  activeDocumentId,
+  activeDocumentAccess,
   user,
+  onSelectDocument,
+  onManageSharing,
+  onRefreshDocuments,
+  onRenameDocument,
+  sharingStatus,
+  sharingBusy,
   onImportBundle,
   onReviewTransaction,
   onCreateManualTransaction,
@@ -90,7 +104,16 @@ export function FinanceApp({
   onReadLedger,
 }: {
   data: FinanceData;
+  documents: LedgerDocumentOption[];
+  activeDocumentId: string;
+  activeDocumentAccess: LedgerDocumentOption["access"];
   user: { displayName: string; role: string };
+  onSelectDocument: (id: string) => void;
+  onManageSharing: () => Promise<void>;
+  onRefreshDocuments: () => Promise<void>;
+  onRenameDocument: (title: string) => Promise<void>;
+  sharingStatus: string;
+  sharingBusy: boolean;
   onImportBundle: (payload: unknown) => Promise<number>;
   onReviewTransaction: (
     transaction: TransactionRow,
@@ -135,6 +158,9 @@ export function FinanceApp({
     useState<LedgerCellInspection | null>(null);
   const [sourceItem, setSourceItem] = useState<CellBreakdownItem | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
+  const activeDocument =
+    documents.find((document) => document.id === activeDocumentId) ??
+    documents[0];
   const activeMonth = data.months.includes(month)
     ? month
     : (data.months.at(-1) ?? month);
@@ -269,7 +295,7 @@ export function FinanceApp({
       const payload = JSON.parse(await file.text());
       const imported = await onImportBundle(payload);
       setImportStatus(
-        `${imported} private records imported to your iCloud. Nothing was added to Git.`,
+        `${imported} encrypted records imported to this iCloud ledger. Nothing was added to Git.`,
       );
     } catch (error) {
       setImportStatus(error instanceof Error ? error.message : "Import failed");
@@ -287,7 +313,7 @@ export function FinanceApp({
       setPrivateImportText("");
       setShowPrivateImport(false);
       setImportStatus(
-        `${imported} private records imported to your iCloud. Nothing was added to Git.`,
+        `${imported} encrypted records imported to this iCloud ledger. Nothing was added to Git.`,
       );
     } catch (error) {
       setImportStatus(error instanceof Error ? error.message : "Import failed");
@@ -321,6 +347,30 @@ export function FinanceApp({
           </div>
         </div>
 
+        <label className="document-switcher">
+          <span>Ledger</span>
+          <select
+            aria-label="Open a personal or shared ledger"
+            value={activeDocumentId}
+            onChange={(event) => {
+              onSelectDocument(event.target.value);
+              setSelectedStatementId(null);
+              setInspectedCell(null);
+              setSourceItem(null);
+            }}
+          >
+            {documents.map((document) => (
+              <option key={document.id} value={document.id}>
+                {document.title}
+                {document.access === "shared" ? " · Shared" : " · Mine"}
+              </option>
+            ))}
+          </select>
+          <small>
+            {activeDocumentAccess === "owner" ? "Owned by you" : "Shared with you"}
+          </small>
+        </label>
+
         <nav className="main-nav" aria-label="Main navigation">
           <NavButton
             active={tab === "overview"}
@@ -353,12 +403,20 @@ export function FinanceApp({
             glyph="↕"
             onClick={() => setTab("data")}
           />
+          <NavButton
+            active={tab === "sharing"}
+            label="Shared access"
+            glyph="⌘"
+            onClick={() => setTab("sharing")}
+          />
         </nav>
 
         <div className="sidebar-foot">
           <div className="privacy-chip">
             <span aria-hidden="true">●</span>
-            Your private iCloud
+            {activeDocumentAccess === "owner"
+              ? "Private until you invite"
+              : "Shared through iCloud"}
           </div>
           <div className="user-row">
             <span className="avatar">{initials(user.displayName)}</span>
@@ -387,8 +445,9 @@ export function FinanceApp({
             <p className="eyebrow">Household budget</p>
             <h1>{tabTitle(tab)}</h1>
           </div>
-          <div className="topbar-actions">
-            <label className="month-control">
+          {tab !== "sharing" ? (
+            <div className="topbar-actions">
+              <label className="month-control">
               <span className="sr-only">Month</span>
               <select
                 value={activeMonth}
@@ -409,27 +468,42 @@ export function FinanceApp({
                   <option value={activeMonth}>{monthLabel(activeMonth)}</option>
                 )}
               </select>
-            </label>
-            <div className="currency-toggle" aria-label="Display currency">
-              {(["MXN", "USD"] as const).map((value) => (
-                <button
-                  key={value}
-                  type="button"
-                  className={currency === value ? "active" : ""}
-                  onClick={() => setCurrency(value)}
-                >
-                  {value}
-                </button>
-              ))}
+              </label>
+              <div className="currency-toggle" aria-label="Display currency">
+                {(["MXN", "USD"] as const).map((value) => (
+                  <button
+                    key={value}
+                    type="button"
+                    className={currency === value ? "active" : ""}
+                    onClick={() => setCurrency(value)}
+                  >
+                    {value}
+                  </button>
+                ))}
+              </div>
             </div>
-          </div>
+          ) : null}
         </header>
 
-        {isEmpty ? (
+        {isEmpty && tab !== "sharing" ? (
           <EmptyState
             onImport={() => fileInput.current?.click()}
             isImporting={isImporting}
             status={importStatus}
+          />
+        ) : null}
+
+        {tab === "sharing" && activeDocument ? (
+          <SharingPanel
+            key={activeDocument.id}
+            documents={documents}
+            activeDocument={activeDocument}
+            onSelect={onSelectDocument}
+            onManageSharing={onManageSharing}
+            onRefresh={onRefreshDocuments}
+            onRename={onRenameDocument}
+            status={sharingStatus}
+            busy={sharingBusy}
           />
         ) : null}
 
@@ -1004,7 +1078,7 @@ export function FinanceApp({
           <section className="page-stack">
             <div className="data-grid">
               <article className="panel import-panel">
-                <p className="eyebrow">Private import</p>
+                <p className="eyebrow">Encrypted import</p>
                 <h2>Bring in a statement bundle</h2>
                 <p>
                   Use the project skill to extract and reconcile a PDF, then
@@ -1038,8 +1112,8 @@ export function FinanceApp({
                       Private bundle JSON
                     </label>
                     <p>
-                      Parsed only in this browser, saved to your private iCloud,
-                      and cleared after a successful import.
+                      Parsed only in this browser, saved to the open encrypted
+                      iCloud ledger, and cleared after a successful import.
                     </p>
                     <textarea
                       id="private-ledger-import"
@@ -1207,7 +1281,189 @@ function tabTitle(tab: Tab) {
   if (tab === "review") return "Statement review";
   if (tab === "manual") return "Manual accounts";
   if (tab === "data") return "Data & price lookups";
+  if (tab === "sharing") return "Shared access";
   return "Overview";
+}
+
+function SharingPanel({
+  documents,
+  activeDocument,
+  onSelect,
+  onManageSharing,
+  onRefresh,
+  onRename,
+  status,
+  busy,
+}: {
+  documents: LedgerDocumentOption[];
+  activeDocument: LedgerDocumentOption;
+  onSelect: (id: string) => void;
+  onManageSharing: () => Promise<void>;
+  onRefresh: () => Promise<void>;
+  onRename: (title: string) => Promise<void>;
+  status: string;
+  busy: boolean;
+}) {
+  const [title, setTitle] = useState(activeDocument.title);
+  const [renameStatus, setRenameStatus] = useState("");
+  const isOwner = activeDocument.access === "owner";
+
+  async function saveTitle() {
+    setRenameStatus("Saving…");
+    try {
+      await onRename(title);
+      setRenameStatus("Saved");
+    } catch (error) {
+      setRenameStatus(
+        error instanceof Error ? error.message : "Could not save the name",
+      );
+    }
+  }
+
+  return (
+    <section className="page-stack sharing-page">
+      <div className="sharing-hero">
+        <div>
+          <p className="eyebrow">Invite-only iCloud collaboration</p>
+          <h2>
+            {isOwner ? "Share this ledger privately" : "A ledger shared with you"}
+          </h2>
+          <p>
+            {isOwner
+              ? "Invite another iCloud user to view and edit this ledger. Apple handles the invitation and participant list; the app never receives an address book or invitation token."
+              : "The owner keeps this ledger in their iCloud account. Your accepted share gives this browser direct access through your own Apple sign-in."}
+          </p>
+        </div>
+        <div className="sharing-hero-actions">
+          {isOwner ? (
+            <button
+              type="button"
+              className="primary-button"
+              disabled={busy}
+              onClick={() => void onManageSharing()}
+            >
+              {busy ? "Opening iCloud…" : "Share or manage people"}
+            </button>
+          ) : null}
+          <button
+            type="button"
+            className="secondary-button"
+            disabled={busy}
+            onClick={() => void onRefresh()}
+          >
+            Refresh shared ledgers
+          </button>
+          {status ? <p className="sharing-status">{status}</p> : null}
+        </div>
+      </div>
+
+      <div className="sharing-facts">
+        <article className="panel sharing-fact">
+          <span className="sharing-fact-icon" aria-hidden="true">⌁</span>
+          <div>
+            <strong>Encrypted payload</strong>
+            <p>
+              Transactions, balances, statement details, and this ledger name
+              remain inside the same encrypted CloudKit field used today.
+            </p>
+          </div>
+        </article>
+        <article className="panel sharing-fact">
+          <span className="sharing-fact-icon" aria-hidden="true">◉</span>
+          <div>
+            <strong>Private invitations only</strong>
+            <p>
+              There is no public link. Only iCloud users accepted into Apple’s
+              share can open the record; collaborators can view and edit.
+            </p>
+          </div>
+        </article>
+        <article className="panel sharing-fact">
+          <span className="sharing-fact-icon" aria-hidden="true">◇</span>
+          <div>
+            <strong>Owner-controlled storage</strong>
+            <p>
+              The record stays in the owner’s iCloud custom zone. With Advanced
+              Data Protection, keys are available only to the owner and share participants.
+            </p>
+          </div>
+        </article>
+      </div>
+
+      <div className="sharing-grid">
+        <article className="panel">
+          <PanelHead
+            title="Your ledger documents"
+            meta={`${documents.length} available`}
+          />
+          <div className="shared-document-list">
+            {documents.map((document) => (
+              <button
+                type="button"
+                key={document.id}
+                className={document.id === activeDocument.id ? "active" : ""}
+                aria-pressed={document.id === activeDocument.id}
+                onClick={() => onSelect(document.id)}
+              >
+                <span className="shared-document-icon" aria-hidden="true">
+                  {document.access === "owner" ? "OF" : "↗"}
+                </span>
+                <span>
+                  <strong>{document.title}</strong>
+                  <small>
+                    {document.access === "owner" ? "Owned by you" : "Shared with you"}
+                  </small>
+                </span>
+                <span aria-hidden="true">›</span>
+              </button>
+            ))}
+          </div>
+        </article>
+
+        <article className="panel sharing-settings">
+          <PanelHead
+            title="Document settings"
+            meta={isOwner ? "Owner controls" : "Managed by owner"}
+          />
+          {isOwner ? (
+            <>
+              <label htmlFor="ledger-document-title">Ledger name</label>
+              <div className="sharing-title-row">
+                <input
+                  id="ledger-document-title"
+                  value={title}
+                  maxLength={80}
+                  onChange={(event) => setTitle(event.target.value)}
+                />
+                <button
+                  type="button"
+                  className="secondary-button"
+                  disabled={busy || !title.trim() || title.trim() === activeDocument.title}
+                  onClick={() => void saveTitle()}
+                >
+                  Save name
+                </button>
+              </div>
+              {renameStatus ? (
+                <p className="sharing-status">{renameStatus}</p>
+              ) : null}
+            </>
+          ) : (
+            <p className="sharing-collaborator-note">
+              Only the owner can rename this ledger or change its participant
+              list. Your transaction and category edits sync directly to the
+              shared record.
+            </p>
+          )}
+          <p className="sharing-adp-note">
+            Advanced Data Protection is an Apple-account setting. Without it,
+            the shared ledger still uses CloudKit encrypted-field protection,
+            but does not have Apple’s strongest end-to-end key model.
+          </p>
+        </article>
+      </div>
+    </section>
+  );
 }
 
 function NavButton({
@@ -1391,10 +1647,10 @@ function ManualAccountsPanel({
     try {
       if (editing) {
         await onUpdate(editing, input);
-        setStatus("Transaction updated in your private iCloud ledger.");
+        setStatus("Transaction updated in this encrypted iCloud ledger.");
       } else {
         await onCreate(input);
-        setStatus("Transaction added to your private iCloud ledger.");
+        setStatus("Transaction added to this encrypted iCloud ledger.");
       }
       resetDraft();
     } catch (error) {
@@ -1411,7 +1667,7 @@ function ManualAccountsPanel({
     try {
       await onDelete(transaction);
       if (editing?.id === transaction.id) resetDraft();
-      setStatus("Transaction deleted from your private iCloud ledger.");
+      setStatus("Transaction deleted from this encrypted iCloud ledger.");
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "Could not delete");
     } finally {
