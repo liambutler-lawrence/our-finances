@@ -10,7 +10,10 @@ const LEDGER_ZONE_NAME = "OurFinancesLedgerV1";
 const LEDGER_RECORD_TYPE = "FinanceLedger";
 const LEDGER_SCHEMA_VERSION = "3.0.0";
 const LEDGER_DOCUMENT_KIND = "our-finances-cloudkit-document-v1";
-const MAX_ENCODED_PAYLOAD_BYTES = 900_000;
+// CloudKit limits non-asset record data to 1 MB. The web-services BYTES value
+// is base64 in transit, so its string length is roughly 4/3 of the bytes that
+// CloudKit stores. Keep 50 kB of headroom for encryption and record metadata.
+const MAX_COMPRESSED_PAYLOAD_BYTES = 950_000;
 
 export type CloudKitIdentity = {
   userRecordName: string;
@@ -326,7 +329,7 @@ async function saveLedgerRecord(
   });
   const digest = await sha256Hex(json);
   const payload = await compressBase64(json);
-  if (payload.length > MAX_ENCODED_PAYLOAD_BYTES) {
+  if (base64ToBytes(payload).byteLength > MAX_COMPRESSED_PAYLOAD_BYTES) {
     throw new Error(
       "This ledger has outgrown the encrypted record limit. Export it before importing more data.",
     );

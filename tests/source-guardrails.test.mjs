@@ -121,6 +121,11 @@ test("uses invite-only encrypted CloudKit sharing without a site data binding", 
   assert.match(cloudkit, /supportedAccess:\s*\["PRIVATE"\]/);
   assert.match(cloudkit, /supportedPermissions:\s*\["READ_WRITE"\]/);
   assert.match(cloudkit, /isEncrypted:\s*true/);
+  assert.match(
+    cloudkit,
+    /base64ToBytes\(payload\)\.byteLength > MAX_COMPRESSED_PAYLOAD_BYTES/,
+  );
+  assert.doesNotMatch(cloudkit, /payload\.length > MAX_ENCODED_PAYLOAD_BYTES/);
   assert.match(cloudkit, /NEXT_PUBLIC_CLOUDKIT_ENVIRONMENT \?\? "production"/);
   assert.doesNotMatch(cloudkit, /publicCloudDatabase/);
   assert.doesNotMatch(cloudkit, /serverToServer/);
