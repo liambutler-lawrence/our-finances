@@ -5,15 +5,18 @@ import { normalizeFinanceData } from "./ledger";
 
 const CLOUDKIT_SCRIPT =
   "https://cdn.apple-cloudkit.com/ck/2/cloudkit.js";
-const LEDGER_RECORD_NAME = "ledger-v1";
+const LEGACY_LEDGER_RECORD_NAME = "ledger-v1";
+const LEDGER_RECORD_NAME = "ledger-v2";
 const LEDGER_ZONE_NAME = "OurFinancesLedgerV1";
 const LEDGER_RECORD_TYPE = "FinanceLedger";
-const LEDGER_SCHEMA_VERSION = "3.0.0";
+const LEDGER_SCHEMA_VERSION = "4.0.0";
 const LEDGER_DOCUMENT_KIND = "our-finances-cloudkit-document-v1";
-// CloudKit limits non-asset record data to 1 MB. The web-services BYTES value
-// is base64 in transit, so its string length is roughly 4/3 of the bytes that
-// CloudKit stores. Keep 50 kB of headroom for encryption and record metadata.
-const MAX_COMPRESSED_PAYLOAD_BYTES = 950_000;
+const LEDGER_MANIFEST_KIND = "our-finances-cloudkit-chunk-manifest-v1";
+// Encrypted fields have additional server-side serialization overhead inside
+// CloudKit's 1 MB record limit. Keep each payload deliberately small instead of
+// trying to predict that overhead near the ceiling.
+const ENCRYPTED_CHUNK_BYTES = 180_000;
+const MAX_LEDGER_CHUNKS = 100;
 
 export type CloudKitIdentity = {
   userRecordName: string;
@@ -50,6 +53,7 @@ type CloudKitRecord = {
   recordName: string;
   recordType: string;
   recordChangeTag?: string;
+  parent?: { recordName: string };
   fields: Record<string, CloudKitField>;
 };
 
@@ -113,8 +117,19 @@ export type StoredLedger = {
   access: "owner" | "shared";
   zoneID: CloudKitZoneID;
   data: FinanceData;
+  chunkSlot?: LedgerChunkSlot;
   recordChangeTag?: string;
   record: CloudKitRecord;
+};
+
+type LedgerChunkSlot = "a" | "b";
+
+type LedgerManifest = {
+  kind: typeof LEDGER_MANIFEST_KIND;
+  state: "preparing" | "ready";
+  chunkSlot?: LedgerChunkSlot;
+  chunkCount?: number;
+  digest?: string;
 };
 
 let configuredContainer: CloudKitContainer | null = null;
@@ -176,7 +191,7 @@ async function loadOwnerLedger(
   const database = container.privateCloudDatabase;
   try {
     const zoneID = await ensureOwnerZone(database);
-    const existing = await fetchLedger(
+    const existing = await fetchChunkedLedger(
       database,
       zoneID,
       "owner",
@@ -185,13 +200,30 @@ async function loadOwnerLedger(
     );
     if (existing) return existing;
 
-    const legacy = await fetchLegacyLedger(database);
+    let zonedLegacy: StoredLedger | null = null;
+    try {
+      zonedLegacy = await fetchSingleRecordLedger(
+        database,
+        zoneID,
+        LEGACY_LEDGER_RECORD_NAME,
+        "owner",
+        "owner",
+        "My finances",
+      );
+    } catch (error) {
+      // Version 3 briefly allowed a payload close enough to CloudKit's record
+      // limit that the encrypted value could be written but not read back.
+      // The pre-zone record was intentionally retained, so recover from it.
+      if (!isEncryptedValueDeserialization(error)) throw error;
+    }
+    const legacy = zonedLegacy ?? (await fetchLegacyLedger(database));
     return saveLedgerRecord(database, {
       id: "owner",
       title: legacy?.title ?? "My finances",
       access: "owner",
       zoneID,
       data: legacy?.data ?? structuredClone(emptyFinanceData),
+      chunkSlot: undefined,
       recordChangeTag: undefined,
       record: emptyRecord(),
     });
@@ -229,15 +261,33 @@ async function loadSharedLedgers(
       throw response.errors?.[0] ?? new Error("Could not list shared ledgers");
     }
     const results = await Promise.all(
-      (response.zones ?? []).map(async ({ zoneID }) =>
-        fetchLedger(
+      (response.zones ?? []).map(async ({ zoneID }) => {
+        const id = `shared:${zoneKey(zoneID)}`;
+        const chunked = await fetchChunkedLedger(
           database,
           zoneID,
           "shared",
-          `shared:${zoneKey(zoneID)}`,
+          id,
           "Shared finances",
-        ),
-      ),
+        );
+        if (chunked) return chunked;
+        try {
+          return await fetchSingleRecordLedger(
+            database,
+            zoneID,
+            LEGACY_LEDGER_RECORD_NAME,
+            "shared",
+            id,
+            "Shared finances",
+          );
+        } catch (error) {
+          // A collaborator cannot repair an owner's oversized legacy root.
+          // Do not let that one share prevent their own ledger from opening;
+          // the owner will migrate it when they next open the site.
+          if (isEncryptedValueDeserialization(error)) return null;
+          throw error;
+        }
+      }),
     );
     return results.filter((item): item is StoredLedger => item !== null);
   } catch (error) {
@@ -251,7 +301,7 @@ async function fetchLegacyLedger(
   database: CloudKitDatabase,
 ): Promise<Pick<StoredLedger, "data" | "title"> | null> {
   try {
-    const response = await database.fetchRecords(LEDGER_RECORD_NAME);
+    const response = await database.fetchRecords(LEGACY_LEDGER_RECORD_NAME);
     if (response.hasErrors) {
       if ((response.errors ?? []).every(isNotFound)) return null;
       throw response.errors?.[0] ?? new Error("Could not load the previous ledger");
@@ -264,15 +314,16 @@ async function fetchLegacyLedger(
   }
 }
 
-async function fetchLedger(
+async function fetchSingleRecordLedger(
   database: CloudKitDatabase,
   zoneID: CloudKitZoneID,
+  recordName: string,
   access: StoredLedger["access"],
   id: string,
   fallbackTitle: string,
 ): Promise<StoredLedger | null> {
   try {
-    const response = await database.fetchRecords(LEDGER_RECORD_NAME, { zoneID });
+    const response = await database.fetchRecords(recordName, { zoneID });
     if (response.hasErrors) {
       if ((response.errors ?? []).every(isNotFound)) return null;
       throw response.errors?.[0] ?? new Error("Could not load the ledger");
@@ -286,6 +337,7 @@ async function fetchLedger(
       access,
       zoneID,
       data: decoded.data,
+      chunkSlot: undefined,
       recordChangeTag: record.recordChangeTag,
       record,
     };
@@ -293,6 +345,68 @@ async function fetchLedger(
     if (isNotFound(error)) return null;
     throw error;
   }
+}
+
+async function fetchChunkedLedger(
+  database: CloudKitDatabase,
+  zoneID: CloudKitZoneID,
+  access: StoredLedger["access"],
+  id: string,
+  fallbackTitle: string,
+): Promise<StoredLedger | null> {
+  const response = await database.fetchRecords(LEDGER_RECORD_NAME, { zoneID });
+  if (response.hasErrors) {
+    if ((response.errors ?? []).every(isNotFound)) return null;
+    throw response.errors?.[0] ?? new Error("Could not load the ledger index");
+  }
+  const record = response.records?.[0];
+  if (!record) return null;
+  const manifest = await decodeLedgerManifest(record);
+  if (manifest.state !== "ready") return null;
+  const { chunkSlot, chunkCount, digest } = manifest;
+  if (
+    !chunkSlot ||
+    !Number.isSafeInteger(chunkCount) ||
+    !chunkCount ||
+    chunkCount < 1 ||
+    chunkCount > MAX_LEDGER_CHUNKS ||
+    typeof digest !== "string" ||
+    digest === ""
+  ) {
+    throw new Error("The encrypted ledger index is invalid");
+  }
+  const names = Array.from({ length: chunkCount }, (_, index) =>
+    chunkRecordName(chunkSlot, index),
+  );
+  const chunksResponse = await database.fetchRecords(names, { zoneID });
+  if (chunksResponse.hasErrors) {
+    throw chunksResponse.errors?.[0] ?? new Error("Could not load ledger data");
+  }
+  const recordsByName = new Map(
+    (chunksResponse.records ?? []).map((chunk) => [chunk.recordName, chunk]),
+  );
+  const chunks = names.map((name) => {
+    const payload = recordsByName.get(name)?.fields.payload?.value;
+    if (typeof payload !== "string" || payload === "") {
+      throw new Error("An encrypted ledger chunk is missing");
+    }
+    return base64ToBytes(payload);
+  });
+  const json = await decompressBytes(concatenateBytes(chunks));
+  if ((await sha256Hex(json)) !== digest) {
+    throw new Error("The ledger failed its integrity check");
+  }
+  const decoded = decodeLedgerJson(json, fallbackTitle);
+  return {
+    id,
+    title: decoded.title,
+    access,
+    zoneID,
+    data: decoded.data,
+    chunkSlot,
+    recordChangeTag: record.recordChangeTag,
+    record,
+  };
 }
 
 export async function saveLedgerDocument(
@@ -320,7 +434,7 @@ async function saveLedgerRecord(
   database: CloudKitDatabase,
   current: StoredLedger,
 ): Promise<StoredLedger> {
-  const { data, title, recordChangeTag, zoneID } = current;
+  const { data, title, zoneID } = current;
   const normalized = normalizeFinanceData(data);
   const json = JSON.stringify({
     kind: LEDGER_DOCUMENT_KIND,
@@ -328,19 +442,106 @@ async function saveLedgerRecord(
     data: normalized,
   });
   const digest = await sha256Hex(json);
-  const payload = await compressBase64(json);
-  if (base64ToBytes(payload).byteLength > MAX_COMPRESSED_PAYLOAD_BYTES) {
+  const compressed = await compressBytes(json);
+  const chunks = splitBytes(compressed, ENCRYPTED_CHUNK_BYTES);
+  if (chunks.length > MAX_LEDGER_CHUNKS) {
     throw new Error(
-      "This ledger has outgrown the encrypted record limit. Export it before importing more data.",
+      "This ledger is too large for its encrypted iCloud document. Export it before importing more data.",
     );
   }
+  let manifestRecord = current.record;
+  if (
+    manifestRecord.recordName !== LEDGER_RECORD_NAME ||
+    !manifestRecord.recordChangeTag
+  ) {
+    const preparing = await encodeLedgerManifest({
+      kind: LEDGER_MANIFEST_KIND,
+      state: "preparing",
+    });
+    const createResponse = await database.saveRecords(
+      ledgerManifestRecord(preparing),
+      { zoneID },
+    );
+    if (createResponse.hasErrors) {
+      const conflict = (createResponse.errors ?? []).find(isConflict);
+      if (!conflict) {
+        throw (
+          createResponse.errors?.[0] ??
+          new Error("Could not create the ledger index")
+        );
+      }
+      const existingResponse = await database.fetchRecords(
+        LEDGER_RECORD_NAME,
+        { zoneID },
+      );
+      const existing = existingResponse.records?.[0];
+      if (existingResponse.hasErrors || !existing) throw conflict;
+      if ((await decodeLedgerManifest(existing)).state === "ready") {
+        throw conflict;
+      }
+      manifestRecord = existing;
+    } else {
+      manifestRecord =
+        createResponse.records?.[0] ?? ledgerManifestRecord(preparing);
+    }
+  }
+
+  const chunkSlot: LedgerChunkSlot = current.chunkSlot === "a" ? "b" : "a";
+  const chunkNames = chunks.map((_, index) =>
+    chunkRecordName(chunkSlot, index),
+  );
+  const existingChunks = await fetchOptionalRecords(
+    database,
+    chunkNames,
+    zoneID,
+  );
+  const chunkRecords: CloudKitRecord[] = chunks.map((chunk, index) => {
+    const existing = existingChunks.get(chunkNames[index]);
+    return {
+      recordName: chunkNames[index],
+      recordType: LEDGER_RECORD_TYPE,
+      ...(existing?.recordChangeTag
+        ? { recordChangeTag: existing.recordChangeTag }
+        : {}),
+      parent: { recordName: LEDGER_RECORD_NAME },
+      fields: {
+        payload: {
+          value: bytesToBase64(chunk),
+          type: "BYTES",
+          isEncrypted: true,
+        },
+        schemaVersion: {
+          value: `${LEDGER_SCHEMA_VERSION}-chunk`,
+          type: "STRING",
+        },
+        updatedAt: {
+          value: Date.now(),
+          type: "TIMESTAMP",
+        },
+      },
+    };
+  });
+  const chunksResponse = await database.saveRecords(chunkRecords, { zoneID });
+  if (chunksResponse.hasErrors) {
+    throw chunksResponse.errors?.[0] ?? new Error("Could not save ledger data");
+  }
+
+  const manifest = await encodeLedgerManifest({
+    kind: LEDGER_MANIFEST_KIND,
+    state: "ready",
+    chunkSlot,
+    chunkCount: chunks.length,
+    digest,
+  });
   const record: CloudKitRecord = {
     recordName: LEDGER_RECORD_NAME,
     recordType: LEDGER_RECORD_TYPE,
-    ...(recordChangeTag ? { recordChangeTag } : {}),
+    ...(manifestRecord.recordChangeTag
+      ? { recordChangeTag: manifestRecord.recordChangeTag }
+      : {}),
     fields: {
       payload: {
-        value: payload,
+        value: manifest,
         type: "BYTES",
         isEncrypted: true,
       },
@@ -367,7 +568,8 @@ async function saveLedgerRecord(
     ...current,
     title: cleanTitle(title),
     data: normalized,
-    recordChangeTag: saved.recordChangeTag ?? recordChangeTag,
+    chunkSlot,
+    recordChangeTag: saved.recordChangeTag ?? manifestRecord.recordChangeTag,
     record: saved,
   };
 }
@@ -381,7 +583,7 @@ export async function shareLedgerDocument(
   }
   try {
     const response = await container.privateCloudDatabase.fetchRecords(
-      LEDGER_RECORD_NAME,
+      current.record.recordName,
       { zoneID: current.zoneID },
     );
     if (response.hasErrors) {
@@ -416,6 +618,13 @@ async function decodeLedgerRecord(
   if (typeof storedDigest === "string" && storedDigest !== digest) {
     throw new Error("The ledger failed its integrity check");
   }
+  return decodeLedgerJson(json, fallbackTitle);
+}
+
+function decodeLedgerJson(
+  json: string,
+  fallbackTitle: string,
+): Pick<StoredLedger, "data" | "title"> {
   const parsed = JSON.parse(json) as unknown;
   if (
     parsed &&
@@ -434,6 +643,56 @@ async function decodeLedgerRecord(
     };
   }
   return { data: normalizeFinanceData(parsed), title: fallbackTitle };
+}
+
+async function encodeLedgerManifest(manifest: LedgerManifest): Promise<string> {
+  return bytesToBase64(await compressBytes(JSON.stringify(manifest)));
+}
+
+async function decodeLedgerManifest(
+  record: CloudKitRecord,
+): Promise<LedgerManifest> {
+  const payload = record.fields.payload?.value;
+  if (typeof payload !== "string" || payload === "") {
+    throw new Error("The encrypted ledger index is missing");
+  }
+  const parsed = JSON.parse(
+    await decompressBytes(base64ToBytes(payload)),
+  ) as Partial<LedgerManifest>;
+  if (parsed.kind !== LEDGER_MANIFEST_KIND) {
+    throw new Error("The encrypted ledger index has an unknown format");
+  }
+  return parsed as LedgerManifest;
+}
+
+function ledgerManifestRecord(payload: string): CloudKitRecord {
+  return {
+    recordName: LEDGER_RECORD_NAME,
+    recordType: LEDGER_RECORD_TYPE,
+    fields: {
+      payload: { value: payload, type: "BYTES", isEncrypted: true },
+      schemaVersion: { value: LEDGER_SCHEMA_VERSION, type: "STRING" },
+      updatedAt: { value: Date.now(), type: "TIMESTAMP" },
+    },
+  };
+}
+
+async function fetchOptionalRecords(
+  database: CloudKitDatabase,
+  names: string[],
+  zoneID: CloudKitZoneID,
+): Promise<Map<string, CloudKitRecord>> {
+  if (names.length === 0) return new Map();
+  const response = await database.fetchRecords(names, { zoneID });
+  const fatal = (response.errors ?? []).find((error) => !isNotFound(error));
+  if (fatal) throw fatal;
+  return new Map(
+    (response.records ?? []).map((record) => [record.recordName, record]),
+  );
+}
+
+function chunkRecordName(slot: LedgerChunkSlot, index: number): string {
+  return `${LEDGER_RECORD_NAME}-chunk-${slot}-${String(index).padStart(3, "0")}`;
 }
 
 function emptyRecord(): CloudKitRecord {
@@ -520,17 +779,41 @@ function loadCloudKitScript(): Promise<void> {
   return scriptPromise;
 }
 
-async function compressBase64(value: string): Promise<string> {
-  const input = new Blob([new TextEncoder().encode(value)]);
-  const stream = input.stream().pipeThrough(new CompressionStream("gzip"));
-  const bytes = new Uint8Array(await new Response(stream).arrayBuffer());
-  return bytesToBase64(bytes);
+async function decompressBase64(value: string): Promise<string> {
+  return decompressBytes(base64ToBytes(value));
 }
 
-async function decompressBase64(value: string): Promise<string> {
-  const input = new Blob([base64ToBytes(value)]);
+async function compressBytes(value: string): Promise<Uint8Array> {
+  const input = new Blob([new TextEncoder().encode(value)]);
+  const stream = input.stream().pipeThrough(new CompressionStream("gzip"));
+  return new Uint8Array(await new Response(stream).arrayBuffer());
+}
+
+async function decompressBytes(value: Uint8Array): Promise<string> {
+  const bytes = new Uint8Array(value.byteLength);
+  bytes.set(value);
+  const input = new Blob([bytes.buffer]);
   const stream = input.stream().pipeThrough(new DecompressionStream("gzip"));
   return new Response(stream).text();
+}
+
+function splitBytes(value: Uint8Array, size: number): Uint8Array[] {
+  const chunks: Uint8Array[] = [];
+  for (let index = 0; index < value.length; index += size) {
+    chunks.push(value.slice(index, index + size));
+  }
+  return chunks.length ? chunks : [new Uint8Array()];
+}
+
+function concatenateBytes(chunks: Uint8Array[]): Uint8Array {
+  const length = chunks.reduce((total, chunk) => total + chunk.byteLength, 0);
+  const result = new Uint8Array(length);
+  let offset = 0;
+  for (const chunk of chunks) {
+    result.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return result;
 }
 
 function bytesToBase64(bytes: Uint8Array): string {
@@ -570,6 +853,22 @@ function isNotFound(value: unknown): boolean {
     error.reason,
     error.serverErrorCode,
   ].some((item) => String(item ?? "").toUpperCase().includes("NOT_FOUND"));
+}
+
+function isEncryptedValueDeserialization(value: unknown): boolean {
+  if (!value || typeof value !== "object") return false;
+  const error = value as CloudKitError;
+  return [
+    error.ckErrorCode,
+    error.code,
+    error.reason,
+    error.message,
+    error.serverErrorCode,
+  ].some((item) =>
+    String(item ?? "")
+      .toLowerCase()
+      .includes("deserializing encrypted value"),
+  );
 }
 
 function cloudKitErrorMessage(value: unknown, fallback: string): string {

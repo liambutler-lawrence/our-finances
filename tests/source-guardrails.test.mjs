@@ -123,9 +123,13 @@ test("uses invite-only encrypted CloudKit sharing without a site data binding", 
   assert.match(cloudkit, /isEncrypted:\s*true/);
   assert.match(
     cloudkit,
-    /base64ToBytes\(payload\)\.byteLength > MAX_COMPRESSED_PAYLOAD_BYTES/,
+    /const ENCRYPTED_CHUNK_BYTES = 180_000/,
   );
-  assert.doesNotMatch(cloudkit, /payload\.length > MAX_ENCODED_PAYLOAD_BYTES/);
+  assert.match(cloudkit, /parent: \{ recordName: LEDGER_RECORD_NAME \}/);
+  assert.match(cloudkit, /isEncryptedValueDeserialization/);
+  assert.match(cloudkit, /LEGACY_LEDGER_RECORD_NAME/);
+  assert.doesNotMatch(cloudkit, /MAX_COMPRESSED_PAYLOAD_BYTES/);
+  assert.doesNotMatch(cloudkit, /MAX_ENCODED_PAYLOAD_BYTES/);
   assert.match(cloudkit, /NEXT_PUBLIC_CLOUDKIT_ENVIRONMENT \?\? "production"/);
   assert.doesNotMatch(cloudkit, /publicCloudDatabase/);
   assert.doesNotMatch(cloudkit, /serverToServer/);
