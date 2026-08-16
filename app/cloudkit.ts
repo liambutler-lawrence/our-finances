@@ -7,7 +7,8 @@ const CLOUDKIT_SCRIPT =
   "https://cdn.apple-cloudkit.com/ck/2/cloudkit.js";
 const LEGACY_LEDGER_RECORD_NAME = "ledger-v1";
 const LEDGER_RECORD_NAME = "ledger-v2";
-const LEDGER_ZONE_NAME = "OurFinancesLedgerV1";
+const LEGACY_LEDGER_ZONE_NAME = "OurFinancesLedgerV1";
+const LEDGER_ZONE_NAME = "OurFinancesLedgerV2";
 const LEDGER_RECORD_TYPE = "FinanceLedger";
 const LEDGER_SCHEMA_VERSION = "4.0.0";
 const LEDGER_DOCUMENT_KIND = "our-finances-cloudkit-document-v1";
@@ -190,47 +191,72 @@ async function loadOwnerLedger(
 ): Promise<StoredLedger> {
   const database = container.privateCloudDatabase;
   try {
-    const zoneID = await ensureOwnerZone(database);
-    const existing = await fetchChunkedLedger(
-      database,
-      zoneID,
-      "owner",
-      "owner",
-      "My finances",
+    const zoneID = await withCloudKitContext(
+      "Could not open a clean iCloud recovery zone",
+      () => ensureOwnerZone(database),
+    );
+    const existing = await withCloudKitContext(
+      "Could not read the recovered iCloud ledger",
+      () =>
+        fetchChunkedLedger(
+          database,
+          zoneID,
+          "owner",
+          "owner",
+          "My finances",
+        ),
     );
     if (existing) return existing;
 
-    let zonedLegacy: StoredLedger | null = null;
+    let recovered: Pick<StoredLedger, "data" | "title"> | null = null;
     try {
-      zonedLegacy = await fetchSingleRecordLedger(
+      const legacyZoneID = { zoneName: LEGACY_LEDGER_ZONE_NAME };
+      const previousChunked = await fetchChunkedLedger(
         database,
-        zoneID,
-        LEGACY_LEDGER_RECORD_NAME,
+        legacyZoneID,
         "owner",
-        "owner",
+        "owner-legacy-zone",
         "My finances",
       );
+      recovered = previousChunked
+        ? { data: previousChunked.data, title: previousChunked.title }
+        : await fetchSingleRecordLedger(
+            database,
+            legacyZoneID,
+            LEGACY_LEDGER_RECORD_NAME,
+            "owner",
+            "owner-legacy-zone",
+            "My finances",
+          );
     } catch (error) {
-      // Version 3 briefly allowed a payload close enough to CloudKit's record
-      // limit that the encrypted value could be written but not read back.
-      // The pre-zone record was intentionally retained, so recover from it.
+      // The first sharing migration wrote an encrypted value that CloudKit can
+      // no longer deserialize. Never touch that zone again; the original
+      // default-zone record was deliberately retained for recovery.
       if (!isEncryptedValueDeserialization(error)) throw error;
     }
-    const legacy = zonedLegacy ?? (await fetchLegacyLedger(database));
-    return saveLedgerRecord(database, {
-      id: "owner",
-      title: legacy?.title ?? "My finances",
-      access: "owner",
-      zoneID,
-      data: legacy?.data ?? structuredClone(emptyFinanceData),
-      chunkSlot: undefined,
-      recordChangeTag: undefined,
-      record: emptyRecord(),
-    });
-  } catch (error) {
-    throw new Error(
-      cloudKitErrorMessage(error, "Could not load your iCloud ledger"),
+    const legacy =
+      recovered ??
+      (await withCloudKitContext(
+        "Could not read the preserved pre-migration iCloud ledger",
+        () => fetchLegacyLedger(database),
+      ));
+    return await withCloudKitContext(
+      "Could not rebuild the ledger in a clean iCloud zone",
+      () =>
+        saveLedgerRecord(database, {
+          id: "owner",
+          title: legacy?.title ?? "My finances",
+          access: "owner",
+          zoneID,
+          data: legacy?.data ?? structuredClone(emptyFinanceData),
+          chunkSlot: undefined,
+          recordChangeTag: undefined,
+          record: emptyRecord(),
+        }),
     );
+  } catch (error) {
+    if (error instanceof Error) throw error;
+    throw contextualCloudKitError(error, "Could not recover your iCloud ledger");
   }
 }
 
@@ -262,16 +288,16 @@ async function loadSharedLedgers(
     }
     const results = await Promise.all(
       (response.zones ?? []).map(async ({ zoneID }) => {
-        const id = `shared:${zoneKey(zoneID)}`;
-        const chunked = await fetchChunkedLedger(
-          database,
-          zoneID,
-          "shared",
-          id,
-          "Shared finances",
-        );
-        if (chunked) return chunked;
         try {
+          const id = `shared:${zoneKey(zoneID)}`;
+          const chunked = await fetchChunkedLedger(
+            database,
+            zoneID,
+            "shared",
+            id,
+            "Shared finances",
+          );
+          if (chunked) return chunked;
           return await fetchSingleRecordLedger(
             database,
             zoneID,
@@ -291,9 +317,10 @@ async function loadSharedLedgers(
     );
     return results.filter((item): item is StoredLedger => item !== null);
   } catch (error) {
-    throw new Error(
-      cloudKitErrorMessage(error, "Could not load shared iCloud ledgers"),
-    );
+    // An unreadable legacy share must never prevent the owner's private ledger
+    // from opening. Its owner can recover it into a fresh zone independently.
+    if (isEncryptedValueDeserialization(error)) return [];
+    throw contextualCloudKitError(error, "Could not load shared iCloud ledgers");
   }
 }
 
@@ -426,7 +453,7 @@ export async function saveLedgerDocument(
       data,
     });
   } catch (error) {
-    throw new Error(cloudKitErrorMessage(error, "Could not save iCloud data"));
+    throw contextualCloudKitError(error, "Could not save iCloud data");
   }
 }
 
@@ -600,7 +627,7 @@ export async function shareLedgerDocument(
       supportedPermissions: ["READ_WRITE"],
     });
   } catch (error) {
-    throw new Error(cloudKitErrorMessage(error, "Could not open iCloud sharing"));
+    throw contextualCloudKitError(error, "Could not open iCloud sharing");
   }
 }
 
@@ -883,6 +910,22 @@ function cloudKitErrorMessage(value: unknown, fallback: string): string {
     if (error.ckErrorCode) return `${fallback} (${error.ckErrorCode})`;
   }
   return fallback;
+}
+
+function contextualCloudKitError(value: unknown, context: string): Error {
+  const detail = cloudKitErrorMessage(value, context);
+  return new Error(detail === context ? context : `${context}: ${detail}`);
+}
+
+async function withCloudKitContext<T>(
+  context: string,
+  operation: () => Promise<T>,
+): Promise<T> {
+  try {
+    return await operation();
+  } catch (error) {
+    throw contextualCloudKitError(error, context);
+  }
 }
 
 function isConflict(value: unknown): boolean {

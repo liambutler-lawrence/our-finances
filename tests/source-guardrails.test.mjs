@@ -128,6 +128,12 @@ test("uses invite-only encrypted CloudKit sharing without a site data binding", 
   assert.match(cloudkit, /parent: \{ recordName: LEDGER_RECORD_NAME \}/);
   assert.match(cloudkit, /isEncryptedValueDeserialization/);
   assert.match(cloudkit, /LEGACY_LEDGER_RECORD_NAME/);
+  assert.match(cloudkit, /LEGACY_LEDGER_ZONE_NAME = "OurFinancesLedgerV1"/);
+  assert.match(cloudkit, /LEDGER_ZONE_NAME = "OurFinancesLedgerV2"/);
+  assert.match(
+    cloudkit,
+    /if \(isEncryptedValueDeserialization\(error\)\) return \[\]/,
+  );
   assert.doesNotMatch(cloudkit, /MAX_COMPRESSED_PAYLOAD_BYTES/);
   assert.doesNotMatch(cloudkit, /MAX_ENCODED_PAYLOAD_BYTES/);
   assert.match(cloudkit, /NEXT_PUBLIC_CLOUDKIT_ENVIRONMENT \?\? "production"/);
