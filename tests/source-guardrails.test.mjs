@@ -130,6 +130,10 @@ test("uses invite-only encrypted CloudKit sharing without a site data binding", 
   assert.match(cloudkit, /LEGACY_LEDGER_RECORD_NAME/);
   assert.match(cloudkit, /LEGACY_LEDGER_ZONE_NAME = "OurFinancesLedgerV1"/);
   assert.match(cloudkit, /LEDGER_ZONE_NAME = "OurFinancesLedgerV2"/);
+  assert.match(cloudkit, /rebuildRecoveredLedger/);
+  assert.match(cloudkit, /for \(let attempt = 0; attempt < 4/);
+  assert.match(cloudkit, /waitForRecoveryRetry/);
+  assert.match(cloudkit, /fetchRequiredRecord/);
   assert.match(
     cloudkit,
     /if \(isEncryptedValueDeserialization\(error\)\) return \[\]/,

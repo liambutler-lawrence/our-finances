@@ -243,7 +243,7 @@ async function loadOwnerLedger(
     return await withCloudKitContext(
       "Could not rebuild the ledger in a clean iCloud zone",
       () =>
-        saveLedgerRecord(database, {
+        rebuildRecoveredLedger(database, {
           id: "owner",
           title: legacy?.title ?? "My finances",
           access: "owner",
@@ -258,6 +258,40 @@ async function loadOwnerLedger(
     if (error instanceof Error) throw error;
     throw contextualCloudKitError(error, "Could not recover your iCloud ledger");
   }
+}
+
+async function rebuildRecoveredLedger(
+  database: CloudKitDatabase,
+  recovered: StoredLedger,
+): Promise<StoredLedger> {
+  let lastConflict: unknown = null;
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    try {
+      return await saveLedgerRecord(database, recovered);
+    } catch (error) {
+      if (!isConflict(error)) throw error;
+      lastConflict = error;
+
+      // A second tab or device may be rebuilding the same preserved ledger.
+      // The manifest is activated only after every chunk is present, so a
+      // ready document is safe to accept as the winner of that race.
+      await waitForRecoveryRetry(attempt);
+      const completed = await fetchChunkedLedger(
+        database,
+        recovered.zoneID,
+        recovered.access,
+        recovered.id,
+        recovered.title,
+      );
+      if (completed) return completed;
+    }
+  }
+  throw lastConflict ?? new Error("Could not finish rebuilding the ledger");
+}
+
+function waitForRecoveryRetry(attempt: number): Promise<void> {
+  const delay = 80 * 2 ** attempt + Math.floor(Math.random() * 120);
+  return new Promise((resolve) => window.setTimeout(resolve, delay));
 }
 
 async function ensureOwnerZone(
@@ -477,10 +511,10 @@ async function saveLedgerRecord(
     );
   }
   let manifestRecord = current.record;
-  if (
+  const initializing =
     manifestRecord.recordName !== LEDGER_RECORD_NAME ||
-    !manifestRecord.recordChangeTag
-  ) {
+    !manifestRecord.recordChangeTag;
+  if (initializing) {
     const preparing = await encodeLedgerManifest({
       kind: LEDGER_MANIFEST_KIND,
       state: "preparing",
@@ -497,19 +531,19 @@ async function saveLedgerRecord(
           new Error("Could not create the ledger index")
         );
       }
-      const existingResponse = await database.fetchRecords(
-        LEDGER_RECORD_NAME,
-        { zoneID },
-      );
-      const existing = existingResponse.records?.[0];
-      if (existingResponse.hasErrors || !existing) throw conflict;
-      if ((await decodeLedgerManifest(existing)).state === "ready") {
-        throw conflict;
-      }
-      manifestRecord = existing;
-    } else {
-      manifestRecord =
-        createResponse.records?.[0] ?? ledgerManifestRecord(preparing);
+    }
+
+    // CloudKit does not consistently include the new change tag in a create
+    // response. Fetch the authoritative record before updating the manifest.
+    // This also makes a concurrent, partially completed rebuild resumable.
+    manifestRecord = await fetchRequiredRecord(
+      database,
+      LEDGER_RECORD_NAME,
+      zoneID,
+      "Could not read the ledger index after creating it",
+    );
+    if ((await decodeLedgerManifest(manifestRecord)).state === "ready") {
+      throw recoveryConflict();
     }
   }
 
@@ -551,6 +585,20 @@ async function saveLedgerRecord(
   const chunksResponse = await database.saveRecords(chunkRecords, { zoneID });
   if (chunksResponse.hasErrors) {
     throw chunksResponse.errors?.[0] ?? new Error("Could not save ledger data");
+  }
+
+  if (initializing) {
+    // Re-read only during recovery. Normal edits must keep their original
+    // change tag so optimistic concurrency continues to protect user changes.
+    manifestRecord = await fetchRequiredRecord(
+      database,
+      LEDGER_RECORD_NAME,
+      zoneID,
+      "Could not refresh the ledger index during recovery",
+    );
+    if ((await decodeLedgerManifest(manifestRecord)).state === "ready") {
+      throw recoveryConflict();
+    }
   }
 
   const manifest = await encodeLedgerManifest({
@@ -716,6 +764,29 @@ async function fetchOptionalRecords(
   return new Map(
     (response.records ?? []).map((record) => [record.recordName, record]),
   );
+}
+
+async function fetchRequiredRecord(
+  database: CloudKitDatabase,
+  name: string,
+  zoneID: CloudKitZoneID,
+  message: string,
+): Promise<CloudKitRecord> {
+  const response = await database.fetchRecords(name, { zoneID });
+  if (response.hasErrors) {
+    throw response.errors?.[0] ?? new Error(message);
+  }
+  const record = response.records?.[0];
+  if (!record?.recordChangeTag) throw new Error(message);
+  return record;
+}
+
+function recoveryConflict(): Error & CloudKitError {
+  const error = new Error(
+    "Another browser is already rebuilding this ledger",
+  ) as Error & CloudKitError;
+  error.ckErrorCode = "CONFLICT";
+  return error;
 }
 
 function chunkRecordName(slot: LedgerChunkSlot, index: number): string {
