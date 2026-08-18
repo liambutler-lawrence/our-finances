@@ -123,13 +123,17 @@ test("uses invite-only encrypted CloudKit sharing without a site data binding", 
   assert.match(cloudkit, /isEncrypted:\s*true/);
   assert.match(
     cloudkit,
-    /const ENCRYPTED_CHUNK_BYTES = 180_000/,
+    /const ENCRYPTED_CHUNK_BYTES = 24_000/,
   );
+  assert.match(cloudkit, /const CLOUDKIT_RECORD_BATCH_SIZE = 10/);
+  assert.match(cloudkit, /fetchRequiredRecords/);
+  assert.match(cloudkit, /saveRecordsInBatches/);
   assert.match(cloudkit, /parent: \{ recordName: LEDGER_RECORD_NAME \}/);
   assert.match(cloudkit, /isEncryptedValueDeserialization/);
   assert.match(cloudkit, /LEGACY_LEDGER_RECORD_NAME/);
   assert.match(cloudkit, /LEGACY_LEDGER_ZONE_NAME = "OurFinancesLedgerV1"/);
-  assert.match(cloudkit, /LEDGER_ZONE_NAME = "OurFinancesLedgerV2"/);
+  assert.match(cloudkit, /LEDGER_RECORD_NAME = "ledger-v3"/);
+  assert.match(cloudkit, /LEDGER_ZONE_NAME = "OurFinancesLedgerV3"/);
   assert.match(cloudkit, /rebuildRecoveredLedger/);
   assert.match(cloudkit, /for \(let attempt = 0; attempt < 4/);
   assert.match(cloudkit, /waitForRecoveryRetry/);

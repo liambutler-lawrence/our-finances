@@ -20,8 +20,8 @@ invite another iCloud user through Apple's private CloudKit sharing UI.
 
 - The browser talks directly to CloudKit; the application server does not
   receive statement contents, transactions, balances, or exports.
-- The ledger is compressed into an encrypted CloudKit field in the owner's
-  private custom record zone, with a SHA-256 integrity digest.
+- The ledger is compressed across small encrypted CloudKit fields in the
+  owner's private custom record zone, with a SHA-256 integrity digest.
 - CloudKit isolates private database records by Apple account. Apple Advanced
   Data Protection provides the strongest available end-to-end protection for
   eligible iCloud data, including records shared with invited participants.
@@ -98,7 +98,7 @@ data to a public or application-controlled database:
 
 | Field | CloudKit type |
 | --- | --- |
-| `payload` | Encrypted Bytes |
+| `payload` | Encrypted Bytes (small manifest or data chunk) |
 | `schemaVersion` | String |
 | `digest` | String |
 | `updatedAt` | Date/Time |

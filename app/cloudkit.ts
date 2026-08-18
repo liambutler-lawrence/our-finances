@@ -6,18 +6,19 @@ import { normalizeFinanceData } from "./ledger";
 const CLOUDKIT_SCRIPT =
   "https://cdn.apple-cloudkit.com/ck/2/cloudkit.js";
 const LEGACY_LEDGER_RECORD_NAME = "ledger-v1";
-const LEDGER_RECORD_NAME = "ledger-v2";
+const LEDGER_RECORD_NAME = "ledger-v3";
 const LEGACY_LEDGER_ZONE_NAME = "OurFinancesLedgerV1";
-const LEDGER_ZONE_NAME = "OurFinancesLedgerV2";
+const LEDGER_ZONE_NAME = "OurFinancesLedgerV3";
 const LEDGER_RECORD_TYPE = "FinanceLedger";
-const LEDGER_SCHEMA_VERSION = "4.0.0";
+const LEDGER_SCHEMA_VERSION = "5.0.0";
 const LEDGER_DOCUMENT_KIND = "our-finances-cloudkit-document-v1";
 const LEDGER_MANIFEST_KIND = "our-finances-cloudkit-chunk-manifest-v1";
 // Encrypted fields have additional server-side serialization overhead inside
 // CloudKit's 1 MB record limit. Keep each payload deliberately small instead of
 // trying to predict that overhead near the ceiling.
-const ENCRYPTED_CHUNK_BYTES = 180_000;
-const MAX_LEDGER_CHUNKS = 100;
+const ENCRYPTED_CHUNK_BYTES = 24_000;
+const MAX_LEDGER_CHUNKS = 200;
+const CLOUDKIT_RECORD_BATCH_SIZE = 10;
 
 export type CloudKitIdentity = {
   userRecordName: string;
@@ -439,12 +440,14 @@ async function fetchChunkedLedger(
   const names = Array.from({ length: chunkCount }, (_, index) =>
     chunkRecordName(chunkSlot, index),
   );
-  const chunksResponse = await database.fetchRecords(names, { zoneID });
-  if (chunksResponse.hasErrors) {
-    throw chunksResponse.errors?.[0] ?? new Error("Could not load ledger data");
-  }
+  const chunkRecords = await fetchRequiredRecords(
+    database,
+    names,
+    zoneID,
+    "Could not load ledger data",
+  );
   const recordsByName = new Map(
-    (chunksResponse.records ?? []).map((chunk) => [chunk.recordName, chunk]),
+    chunkRecords.map((chunk) => [chunk.recordName, chunk]),
   );
   const chunks = names.map((name) => {
     const payload = recordsByName.get(name)?.fields.payload?.value;
@@ -582,10 +585,12 @@ async function saveLedgerRecord(
       },
     };
   });
-  const chunksResponse = await database.saveRecords(chunkRecords, { zoneID });
-  if (chunksResponse.hasErrors) {
-    throw chunksResponse.errors?.[0] ?? new Error("Could not save ledger data");
-  }
+  await saveRecordsInBatches(
+    database,
+    chunkRecords,
+    zoneID,
+    "Could not save ledger data",
+  );
 
   if (initializing) {
     // Re-read only during recovery. Normal edits must keep their original
@@ -758,12 +763,53 @@ async function fetchOptionalRecords(
   zoneID: CloudKitZoneID,
 ): Promise<Map<string, CloudKitRecord>> {
   if (names.length === 0) return new Map();
-  const response = await database.fetchRecords(names, { zoneID });
-  const fatal = (response.errors ?? []).find((error) => !isNotFound(error));
-  if (fatal) throw fatal;
-  return new Map(
-    (response.records ?? []).map((record) => [record.recordName, record]),
-  );
+  const records: CloudKitRecord[] = [];
+  for (const batch of batchRecords(names)) {
+    const response = await database.fetchRecords(batch, { zoneID });
+    const fatal = (response.errors ?? []).find((error) => !isNotFound(error));
+    if (fatal) throw fatal;
+    records.push(...(response.records ?? []));
+  }
+  return new Map(records.map((record) => [record.recordName, record]));
+}
+
+async function fetchRequiredRecords(
+  database: CloudKitDatabase,
+  names: string[],
+  zoneID: CloudKitZoneID,
+  message: string,
+): Promise<CloudKitRecord[]> {
+  const records: CloudKitRecord[] = [];
+  for (const batch of batchRecords(names)) {
+    const response = await database.fetchRecords(batch, { zoneID });
+    if (response.hasErrors) {
+      throw response.errors?.[0] ?? new Error(message);
+    }
+    records.push(...(response.records ?? []));
+  }
+  return records;
+}
+
+async function saveRecordsInBatches(
+  database: CloudKitDatabase,
+  records: CloudKitRecord[],
+  zoneID: CloudKitZoneID,
+  message: string,
+): Promise<void> {
+  for (const batch of batchRecords(records)) {
+    const response = await database.saveRecords(batch, { zoneID });
+    if (response.hasErrors) {
+      throw response.errors?.[0] ?? new Error(message);
+    }
+  }
+}
+
+function batchRecords<T>(items: T[]): T[][] {
+  const batches: T[][] = [];
+  for (let index = 0; index < items.length; index += CLOUDKIT_RECORD_BATCH_SIZE) {
+    batches.push(items.slice(index, index + CLOUDKIT_RECORD_BATCH_SIZE));
+  }
+  return batches;
 }
 
 async function fetchRequiredRecord(
